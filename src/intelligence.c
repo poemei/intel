@@ -1909,390 +1909,69 @@ static int
 rictus_intelligence_rag_execute(
     rictus_module_command_reply_fn reply,
     void *reply_context,
-    DWORD *exit_code
+    int *exit_code
 )
 {
-    SECURITY_ATTRIBUTES
-        security_attributes;
+    int pipefd[2];
+    pid_t pid;
+    int status;
+    char line[RICTUS_INTELLIGENCE_RAG_LINE_MAX];
+    size_t line_length = 0;
 
-    STARTUPINFOA
-        startup_info;
+    if (!reply || !exit_code) return 0;
+    *exit_code = -1;
+    if (pipe(pipefd) != 0) return 0;
 
-    PROCESS_INFORMATION
-        process_info;
-
-    HANDLE read_pipe =
-        NULL;
-
-    HANDLE write_pipe =
-        NULL;
-
-    char command_line[] =
-        "rag_builder";
-
-    char line[
-        RICTUS_INTELLIGENCE_RAG_LINE_MAX
-    ];
-
-    size_t line_length =
-        0;
-
-    BOOL process_created;
-
-    DWORD bytes_read;
-
-
-    if (
-        reply == NULL ||
-        exit_code == NULL
-        )
-    {
-        return 0;
+    pid = fork();
+    if (pid < 0) { close(pipefd[0]); close(pipefd[1]); return 0; }
+    if (pid == 0) {
+        dup2(pipefd[1], STDOUT_FILENO);
+        dup2(pipefd[1], STDERR_FILENO);
+        close(pipefd[0]);
+        close(pipefd[1]);
+        execlp("rag_builder", "rag_builder", (char *)NULL);
+        _exit(127);
     }
 
-
-    *exit_code =
-        (DWORD)-1;
-
-
-    memset(
-        &security_attributes,
-        0,
-        sizeof(security_attributes)
-    );
-
-
-    security_attributes.nLength =
-        sizeof(security_attributes);
-
-    security_attributes.bInheritHandle =
-        TRUE;
-
-
-    if (
-        !CreatePipe(
-            &read_pipe,
-            &write_pipe,
-            &security_attributes,
-            0
-        )
-        )
-    {
-        return 0;
-    }
-
-
-    if (
-        !SetHandleInformation(
-            read_pipe,
-            HANDLE_FLAG_INHERIT,
-            0
-        )
-        )
-    {
-        CloseHandle(
-            read_pipe
-        );
-
-        CloseHandle(
-            write_pipe
-        );
-
-        return 0;
-    }
-
-
-    memset(
-        &startup_info,
-        0,
-        sizeof(startup_info)
-    );
-
-
-    startup_info.cb =
-        sizeof(startup_info);
-
-    startup_info.dwFlags =
-        STARTF_USESTDHANDLES;
-
-    startup_info.hStdOutput =
-        write_pipe;
-
-    startup_info.hStdError =
-        write_pipe;
-
-    startup_info.hStdInput =
-        GetStdHandle(
-            STD_INPUT_HANDLE
-        );
-
-
-    memset(
-        &process_info,
-        0,
-        sizeof(process_info)
-    );
-
-
-    process_created =
-        CreateProcessA(
-            NULL,
-            command_line,
-            NULL,
-            NULL,
-            TRUE,
-            CREATE_NO_WINDOW,
-            NULL,
-            NULL,
-            &startup_info,
-            &process_info
-        );
-
-
-    CloseHandle(
-        write_pipe
-    );
-
-    write_pipe =
-        NULL;
-
-
-    if (
-        !process_created
-        )
-    {
-        CloseHandle(
-            read_pipe
-        );
-
-        return 0;
-    }
-
-
-    for (;;)
-    {
+    close(pipefd[1]);
+    for (;;) {
         char buffer[256];
-        DWORD index;
-
-
-        if (
-            !ReadFile(
-                read_pipe,
-                buffer,
-                sizeof(buffer),
-                &bytes_read,
-                NULL
-            ) ||
-            bytes_read == 0
-            )
-        {
-            break;
-        }
-
-
-        for (
-            index = 0;
-            index < bytes_read;
-            ++index
-            )
-        {
-            char c =
-                buffer[index];
-
-
-            if (
-                c == '\r'
-                )
-            {
-                continue;
-            }
-
-
-            if (
-                c == '\n'
-                )
-            {
-                line[
-                    line_length
-                ] =
-                    '\0';
-
-
-                if (
-                    !rictus_intelligence_rag_reply_line(
-                        reply,
-                        reply_context,
-                        line
-                    )
-                    )
-                {
-                    CloseHandle(
-                        read_pipe
-                    );
-
-                    TerminateProcess(
-                        process_info.hProcess,
-                        1
-                    );
-
-                    WaitForSingleObject(
-                        process_info.hProcess,
-                        INFINITE
-                    );
-
-                    CloseHandle(
-                        process_info.hThread
-                    );
-
-                    CloseHandle(
-                        process_info.hProcess
-                    );
-
+        ssize_t n = read(pipefd[0], buffer, sizeof(buffer));
+        ssize_t i;
+        if (n <= 0) break;
+        for (i = 0; i < n; ++i) {
+            char ch = buffer[i];
+            if (ch == '\r') continue;
+            if (ch == '\n' || line_length == sizeof(line) - 1) {
+                line[line_length] = '\0';
+                if (!rictus_intelligence_rag_reply_line(reply, reply_context, line)) {
+                    kill(pid, SIGTERM);
+                    close(pipefd[0]);
+                    (void)waitpid(pid, &status, 0);
                     return 0;
                 }
-
-
-                line_length =
-                    0;
-
-                continue;
+                line_length = 0;
+                if (ch == '\n') continue;
             }
-
-
-            if (
-                line_length >=
-                sizeof(line) - 1
-                )
-            {
-                line[
-                    line_length
-                ] =
-                    '\0';
-
-
-                if (
-                    !rictus_intelligence_rag_reply_line(
-                        reply,
-                        reply_context,
-                        line
-                    )
-                    )
-                {
-                    CloseHandle(
-                        read_pipe
-                    );
-
-                    TerminateProcess(
-                        process_info.hProcess,
-                        1
-                    );
-
-                    WaitForSingleObject(
-                        process_info.hProcess,
-                        INFINITE
-                    );
-
-                    CloseHandle(
-                        process_info.hThread
-                    );
-
-                    CloseHandle(
-                        process_info.hProcess
-                    );
-
-                    return 0;
-                }
-
-
-                line_length =
-                    0;
-            }
-
-
-            line[
-                line_length++
-            ] =
-                c;
+            line[line_length++] = ch;
         }
     }
+    close(pipefd[0]);
 
-
-    CloseHandle(
-        read_pipe
-    );
-
-
-    if (
-        line_length > 0
-        )
-    {
-        line[
-            line_length
-        ] =
-            '\0';
-
-
-        if (
-            !rictus_intelligence_rag_reply_line(
-                reply,
-                reply_context,
-                line
-            )
-            )
-        {
-            TerminateProcess(
-                process_info.hProcess,
-                1
-            );
-
-            WaitForSingleObject(
-                process_info.hProcess,
-                INFINITE
-            );
-
-            CloseHandle(
-                process_info.hThread
-            );
-
-            CloseHandle(
-                process_info.hProcess
-            );
-
+    if (line_length > 0) {
+        line[line_length] = '\0';
+        if (!rictus_intelligence_rag_reply_line(reply, reply_context, line)) {
+            kill(pid, SIGTERM);
+            (void)waitpid(pid, &status, 0);
             return 0;
         }
     }
 
-
-    WaitForSingleObject(
-        process_info.hProcess,
-        INFINITE
-    );
-
-
-    if (
-        !GetExitCodeProcess(
-            process_info.hProcess,
-            exit_code
-        )
-        )
-    {
-        *exit_code =
-            (DWORD)-1;
-    }
-
-
-    CloseHandle(
-        process_info.hThread
-    );
-
-    CloseHandle(
-        process_info.hProcess
-    );
-
-
+    if (waitpid(pid, &status, 0) < 0) return 0;
+    if (WIFEXITED(status)) *exit_code = WEXITSTATUS(status);
+    else if (WIFSIGNALED(status)) *exit_code = 128 + WTERMSIG(status);
     return 1;
 }
-
 
 /*
  * ------------------------------------------------
