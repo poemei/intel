@@ -25,6 +25,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+#include <strings.h>
 
 #include "parser.h"
 
@@ -1869,11 +1870,7 @@ rictus_intelligence_parse_nist_csrc(
          * The next meaningful line is the title.
          */
 
-        strcpy_s(
-            title,
-            sizeof(title),
-            line
-        );
+        snprintf(title, sizeof(title), "%s", line);
 
 
         if (
