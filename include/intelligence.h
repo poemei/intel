@@ -1,9 +1,7 @@
 #ifndef RICTUS_INTELLIGENCE_H
 #define RICTUS_INTELLIGENCE_H
 
-#include "platform.h"
-
-#include "module.h"
+#include "rictus_module.h"
 
 
 #define RICTUS_INTELLIGENCE_ID \
@@ -74,7 +72,6 @@ extern const rictus_module_descriptor_t
     rictus_intelligence_descriptor;
 
 
-RICTUS_EXPORT
 const rictus_module_descriptor_t *
 stnlabz_module_get_descriptor(void);
 
