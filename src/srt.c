@@ -677,7 +677,8 @@ rictus_intelligence_srt_allocate_id(
     size_t srt_id_size
 )
 {
-    SYSTEMTIME now;
+    time_t now;
+    struct tm utc;
     char prefix[32];
     unsigned int highest = 0;
     size_t index;
@@ -692,17 +693,11 @@ rictus_intelligence_srt_allocate_id(
         return 0;
     }
 
-    GetSystemTime(&now);
+    now = time(NULL);
+    if (now == (time_t)-1 || gmtime_r(&now, &utc) == NULL) return 0;
 
-    written =
-        snprintf(
-            prefix,
-            sizeof(prefix),
-            "SRT-%04u%02u%02u-",
-            (unsigned int)now.wYear,
-            (unsigned int)now.wMonth,
-            (unsigned int)now.wDay
-        );
+    written = snprintf(prefix, sizeof(prefix), "SRT-%04d%02d%02d-",
+        utc.tm_year + 1900, utc.tm_mon + 1, utc.tm_mday);
 
     if (
         written <= 0 ||
@@ -804,16 +799,14 @@ rictus_intelligence_srt_write_approved_report(
     }
 
     if (
-        fopen_s(&input, candidate_path, "r") != 0 ||
-        input == NULL
+        (input = fopen(candidate_path, "r")) == NULL
         )
     {
         return 0;
     }
 
     if (
-        fopen_s(&output, approved_path, "w") != 0 ||
-        output == NULL
+        (output = fopen(approved_path, "w")) == NULL
         )
     {
         fclose(input);
