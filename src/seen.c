@@ -9,9 +9,9 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <strings.h>
 
 #include "seen.h"
-#include "platform.h"
 
 
 #define RICTUS_INTELLIGENCE_STATE_NAME \
@@ -201,12 +201,7 @@ rictus_intelligence_seen_load(
 
 
     if (
-        fopen_s(
-            &file,
-            path,
-            "r"
-        ) != 0 ||
-        file == NULL
+        ((file = fopen(path, "r")) == NULL)
     )
     {
         /*
@@ -409,12 +404,7 @@ rictus_intelligence_seen_add(
 
 
     if (
-        fopen_s(
-            &file,
-            path,
-            "a"
-        ) != 0 ||
-        file == NULL
+        ((file = fopen(path, "a")) == NULL)
     )
     {
         return
