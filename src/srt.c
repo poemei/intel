@@ -49,156 +49,29 @@
  */
 
 static int
-rictus_intelligence_srt_ensure_directory(
-    const char *path
-)
+rictus_intelligence_srt_ensure_directory(const char *path)
 {
-    char buffer[
-        RICTUS_INTELLIGENCE_SRT_PATH_MAX
-    ];
+    char buffer[RICTUS_INTELLIGENCE_SRT_PATH_MAX];
+    size_t i, length;
+    struct stat st;
 
-    size_t index;
+    if (path == NULL || path[0] == '\0') return 0;
+    length = strlen(path);
+    if (length >= sizeof(buffer)) return 0;
+    memcpy(buffer, path, length + 1);
 
-    DWORD attributes;
-
-
-    if (
-        path == NULL ||
-        path[0] == '\0' ||
-        strlen(path) >=
-            sizeof(buffer)
-    )
-    {
-        return 0;
-    }
-
-
-    strcpy_s(
-        buffer,
-        sizeof(buffer),
-        path
-    );
-
-
-    for (
-        index = 0;
-        buffer[index] != '\0';
-        ++index
-        )
-    {
-        if (
-            buffer[index] != '\\' &&
-            buffer[index] != '/'
-            )
+    for (i = 1; i <= length; ++i) {
+        if (buffer[i] != '/' && buffer[i] != '\0') continue;
         {
-            continue;
+            char saved = buffer[i];
+            buffer[i] = '\0';
+            if (buffer[0] != '\0' && mkdir(buffer, 0750) != 0 && errno != EEXIST) return 0;
+            buffer[i] = saved;
         }
-
-
-        /*
-         * Do not attempt to create "C:".
-         */
-
-        if (
-            index == 2 &&
-            buffer[1] == ':'
-            )
-        {
-            continue;
-        }
-
-
-        buffer[index] =
-            '\0';
-
-
-        if (
-            buffer[0] != '\0'
-            )
-        {
-            attributes =
-                GetFileAttributesA(
-                    buffer
-                );
-
-
-            if (
-                attributes ==
-                INVALID_FILE_ATTRIBUTES
-                )
-            {
-                if (
-                    !CreateDirectoryA(
-                        buffer,
-                        NULL
-                    ) &&
-                    GetLastError() !=
-                        ERROR_ALREADY_EXISTS
-                    )
-                {
-                    buffer[index] =
-                        '\\';
-
-
-                    return 0;
-                }
-            }
-            else if (
-                (
-                    attributes &
-                    FILE_ATTRIBUTE_DIRECTORY
-                ) == 0
-                )
-            {
-                buffer[index] =
-                    '\\';
-
-
-                return 0;
-            }
-        }
-
-
-        buffer[index] =
-            '\\';
     }
 
-
-    attributes =
-        GetFileAttributesA(
-            buffer
-        );
-
-
-    if (
-        attributes !=
-        INVALID_FILE_ATTRIBUTES
-        )
-    {
-        return
-            (
-                attributes &
-                FILE_ATTRIBUTE_DIRECTORY
-            ) != 0;
-    }
-
-
-    if (
-        CreateDirectoryA(
-            buffer,
-            NULL
-        )
-        )
-    {
-        return 1;
-    }
-
-
-    return
-        GetLastError() ==
-        ERROR_ALREADY_EXISTS;
+    return stat(path, &st) == 0 && S_ISDIR(st.st_mode);
 }
-
 
 /*
  * ------------------------------------------------
@@ -302,50 +175,16 @@ rictus_intelligence_srt_normalize_text(
  */
 
 static int
-rictus_intelligence_srt_timestamp(
-    char *output,
-    size_t output_size
-)
+rictus_intelligence_srt_timestamp(char *output, size_t output_size)
 {
-    SYSTEMTIME now;
+    time_t now;
+    struct tm utc;
 
-    int written;
-
-
-    if (
-        output == NULL ||
-        output_size == 0
-        )
-    {
-        return 0;
-    }
-
-
-    GetSystemTime(
-        &now
-    );
-
-
-    written =
-        snprintf(
-            output,
-            output_size,
-            "%04u-%02u-%02uT%02u:%02u:%02uZ",
-            (unsigned int)now.wYear,
-            (unsigned int)now.wMonth,
-            (unsigned int)now.wDay,
-            (unsigned int)now.wHour,
-            (unsigned int)now.wMinute,
-            (unsigned int)now.wSecond
-        );
-
-
-    return
-        written > 0 &&
-        written <
-            (int)output_size;
+    if (output == NULL || output_size == 0) return 0;
+    now = time(NULL);
+    if (now == (time_t)-1 || gmtime_r(&now, &utc) == NULL) return 0;
+    return strftime(output, output_size, "%Y-%m-%dT%H:%M:%SZ", &utc) != 0;
 }
-
 
 /*
  * ------------------------------------------------
@@ -459,12 +298,7 @@ rictus_intelligence_srt_store_load(
 
 
     if (
-        fopen_s(
-            &file,
-            path,
-            "r"
-        ) != 0 ||
-        file == NULL
+        ((file = fopen(path, "r")) == NULL)
         )
     {
         /*
@@ -506,7 +340,7 @@ rictus_intelligence_srt_store_load(
 
 
         intelligence_id =
-            strtok_s(
+            strtok_r(
                 line,
                 "\t",
                 &context
@@ -514,7 +348,7 @@ rictus_intelligence_srt_store_load(
 
 
         status =
-            strtok_s(
+            strtok_r(
                 NULL,
                 "\t",
                 &context
@@ -522,7 +356,7 @@ rictus_intelligence_srt_store_load(
 
 
         srt_id =
-            strtok_s(
+            strtok_r(
                 NULL,
                 "\t",
                 &context
@@ -580,24 +414,12 @@ rictus_intelligence_srt_store_load(
 
 
         if (
-            strcpy_s(
-                request->intelligence_id,
-                sizeof(request->intelligence_id),
-                intelligence_id
-            ) != 0 ||
-            strcpy_s(
-                request->status,
-                sizeof(request->status),
-                status
-            ) != 0 ||
+            snprintf(request->intelligence_id, sizeof(request->intelligence_id), "%s", intelligence_id) != 0 ||
+            snprintf(request->status, sizeof(request->status), "%s", status) != 0 ||
             (
                 srt_id != NULL &&
                 srt_id[0] != '\0' &&
-                strcpy_s(
-                    request->srt_id,
-                    sizeof(request->srt_id),
-                    srt_id
-                ) != 0
+                snprintf(request->srt_id, sizeof(request->srt_id), "%s", srt_id) != 0
             )
             )
         {
@@ -678,12 +500,7 @@ rictus_intelligence_srt_store_append(
 
 
     if (
-        fopen_s(
-            &file,
-            path,
-            "a"
-        ) != 0 ||
-        file == NULL
+        ((file = fopen(path, "a")) == NULL)
         )
     {
         return 0;
@@ -731,16 +548,8 @@ rictus_intelligence_srt_store_append(
 
 
     if (
-        strcpy_s(
-            request->intelligence_id,
-            sizeof(request->intelligence_id),
-            intelligence_id
-        ) != 0 ||
-        strcpy_s(
-            request->status,
-            sizeof(request->status),
-            status
-        ) != 0
+        snprintf(request->intelligence_id, sizeof(request->intelligence_id), "%s", intelligence_id) != 0 ||
+        snprintf(request->status, sizeof(request->status), "%s", status) != 0
         )
     {
         memset(
@@ -805,12 +614,7 @@ rictus_intelligence_srt_store_rewrite(
     }
 
     if (
-        fopen_s(
-            &file,
-            temporary_path,
-            "w"
-        ) != 0 ||
-        file == NULL
+        ((file = fopen(temporary_path, "w")) == NULL)
         )
     {
         return 0;
@@ -836,7 +640,7 @@ rictus_intelligence_srt_store_rewrite(
             )
         {
             fclose(file);
-            DeleteFileA(temporary_path);
+            unlink(temporary_path);
             return 0;
         }
     }
@@ -846,20 +650,13 @@ rictus_intelligence_srt_store_rewrite(
         fclose(file) != 0
         )
     {
-        DeleteFileA(temporary_path);
+        unlink(temporary_path);
         return 0;
     }
 
-    if (
-        !MoveFileExA(
-            temporary_path,
-            path,
-            MOVEFILE_REPLACE_EXISTING |
-            MOVEFILE_WRITE_THROUGH
-        )
-        )
+    if (rename(temporary_path, path) != 0)
     {
-        DeleteFileA(temporary_path);
+        unlink(temporary_path);
         return 0;
     }
 
@@ -1174,7 +971,7 @@ rictus_intelligence_srt_write_approved_report(
         {
             fclose(input);
             fclose(output);
-            DeleteFileA(approved_path);
+            unlink(approved_path);
             return 0;
         }
     }
@@ -1186,7 +983,7 @@ rictus_intelligence_srt_write_approved_report(
         fclose(output) != 0
         )
     {
-        DeleteFileA(approved_path);
+        unlink(approved_path);
         return 0;
     }
 
@@ -1288,7 +1085,7 @@ rictus_intelligence_srt_approve(
         snprintf(
             candidate_path,
             sizeof(candidate_path),
-            "%s\\%s.srt.md",
+            "%s/%s.srt.md",
             directory,
             intelligence_id
         );
@@ -1333,32 +1130,16 @@ rictus_intelligence_srt_approve(
         return 0;
     }
 
-    strcpy_s(
-        previous_status,
-        sizeof(previous_status),
-        request->status
-    );
+    snprintf(previous_status, sizeof(previous_status), "%s", request->status);
 
-    strcpy_s(
-        previous_srt_id,
-        sizeof(previous_srt_id),
-        request->srt_id
-    );
+    snprintf(previous_srt_id, sizeof(previous_srt_id), "%s", request->srt_id);
 
     if (
-        strcpy_s(
-            request->status,
-            sizeof(request->status),
-            "APPROVED"
-        ) != 0 ||
-        strcpy_s(
-            request->srt_id,
-            sizeof(request->srt_id),
-            allocated_id
-        ) != 0
+        snprintf(request->status, sizeof(request->status), "%s", "APPROVED") != 0 ||
+        snprintf(request->srt_id, sizeof(request->srt_id), "%s", allocated_id) != 0
         )
     {
-        DeleteFileA(temporary_approved_path);
+        unlink(temporary_approved_path);
         return 0;
     }
 
@@ -1369,19 +1150,11 @@ rictus_intelligence_srt_approve(
         )
         )
     {
-        strcpy_s(
-            request->status,
-            sizeof(request->status),
-            previous_status
-        );
+        snprintf(request->status, sizeof(request->status), "%s", previous_status);
 
-        strcpy_s(
-            request->srt_id,
-            sizeof(request->srt_id),
-            previous_srt_id
-        );
+        snprintf(request->srt_id, sizeof(request->srt_id), "%s", previous_srt_id);
 
-        DeleteFileA(temporary_approved_path);
+        unlink(temporary_approved_path);
         return 0;
     }
 
@@ -1389,7 +1162,7 @@ rictus_intelligence_srt_approve(
         snprintf(
             approved_report_path,
             approved_report_path_size,
-            "%s\\%s.srt.md",
+            "%s/%s.srt.md",
             directory,
             allocated_id
         );
@@ -1402,13 +1175,7 @@ rictus_intelligence_srt_approve(
         return 0;
     }
 
-    if (
-        !MoveFileExA(
-            temporary_approved_path,
-            approved_report_path,
-            MOVEFILE_WRITE_THROUGH
-        )
-        )
+    if (rename(temporary_approved_path, approved_report_path) != 0)
     {
         return 0;
     }
@@ -1420,7 +1187,7 @@ rictus_intelligence_srt_approve(
      */
 
     if (
-        !DeleteFileA(candidate_path)
+        !unlink(candidate_path)
         )
     {
         /*
@@ -1432,11 +1199,7 @@ rictus_intelligence_srt_approve(
     }
 
     if (
-        strcpy_s(
-            srt_id,
-            srt_id_size,
-            allocated_id
-        ) != 0
+        snprintf(srt_id, srt_id_size, "%s", allocated_id) >= (int)srt_id_size
         )
     {
         return 0;
@@ -1476,15 +1239,15 @@ rictus_intelligence_srt_reject(
         return 0;
     }
 
-    strcpy_s(previous_status, sizeof(previous_status), request->status);
-    if (strcpy_s(request->status, sizeof(request->status), "REJECTED") != 0)
+    snprintf(previous_status, sizeof(previous_status), "%s", request->status);
+    if (snprintf(request->status, sizeof(request->status), "%s", "REJECTED") != 0)
     {
         return 0;
     }
 
     if (!rictus_intelligence_srt_store_rewrite(store, path))
     {
-        strcpy_s(request->status, sizeof(request->status), previous_status);
+        snprintf(request->status, sizeof(request->status), "%s", previous_status);
         return 0;
     }
 
@@ -1576,7 +1339,7 @@ rictus_intelligence_srt_generate_report(
         snprintf(
             report_path,
             report_path_size,
-            "%s\\%s.srt.md",
+            "%s/%s.srt.md",
             directory,
             record->id
         );
@@ -1647,19 +1410,11 @@ rictus_intelligence_srt_generate_report(
 
     if (record->item.content[0] != '\0')
     {
-        strcpy_s(
-            content,
-            sizeof(content),
-            record->item.content
-        );
+        snprintf(content, sizeof(content), "%s", record->item.content);
     }
     else
     {
-        strcpy_s(
-            content,
-            sizeof(content),
-            "No source content was retained."
-        );
+        snprintf(content, sizeof(content), "%s", "No source content was retained.");
     }
 
 
@@ -1671,12 +1426,7 @@ rictus_intelligence_srt_generate_report(
 
 
     if (
-        fopen_s(
-            &file,
-            report_path,
-            "w"
-        ) != 0 ||
-        file == NULL
+        ((file = fopen(report_path, "w")) == NULL)
         )
     {
         return 0;
@@ -1776,7 +1526,7 @@ rictus_intelligence_srt_generate_report(
         );
 
 
-        DeleteFileA(
+        unlink(
             report_path
         );
 
@@ -1796,7 +1546,7 @@ rictus_intelligence_srt_generate_report(
         );
 
 
-        DeleteFileA(
+        unlink(
             report_path
         );
 
