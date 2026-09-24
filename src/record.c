@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <string.h>
+#include <strings.h>
 
 #include "record.h"
 
@@ -202,7 +203,7 @@ rictus_intelligence_record_store_find(
 
     for (i = 0; i < store->count; ++i)
     {
-        if (_stricmp(store->records[i].id, id) == 0)
+        if (strcasecmp(store->records[i].id, id) == 0)
         {
             return &store->records[i];
         }
@@ -227,7 +228,7 @@ rictus_intelligence_record_store_load(
 
     rictus_intelligence_record_store_init(store);
 
-    if (fopen_s(&file, path, "r") != 0 || file == NULL)
+    if (((file = fopen(path, "r")) == NULL))
     {
         return 1;
     }
@@ -242,12 +243,12 @@ rictus_intelligence_record_store_load(
 
         line[strcspn(line, "\r\n")] = '\0';
 
-        token = rictus_strtok(line, "\t", &context);
+        token = strtok_r(line, "\t", &context);
 
         while (token != NULL && count < 15)
         {
             fields[count++] = token;
-            token = rictus_strtok(NULL, "\t", &context);
+            token = strtok_r(NULL, "\t", &context);
         }
 
         if (count != 7 && count != 8 && count != 15)
@@ -264,7 +265,7 @@ rictus_intelligence_record_store_load(
         record = &store->records[store->count];
         memset(record, 0, sizeof(*record));
 
-        strcpy_s(record->id, sizeof(record->id), fields[0]);
+        snprintf(record->id, sizeof(record->id), "%s", fields[0]);
         record_unescape(fields[1], record->item.source, sizeof(record->item.source));
         record_unescape(fields[2], record->item.title, sizeof(record->item.title));
         record_unescape(fields[3], record->item.url, sizeof(record->item.url));
@@ -361,7 +362,7 @@ rictus_intelligence_record_store_append(
     record_escape(item->unknowns, unknowns, sizeof(unknowns));
     record_escape(item->provenance, provenance, sizeof(provenance));
 
-    if (fopen_s(&file, path, "a") != 0 || file == NULL)
+    if (((file = fopen(path, "a")) == NULL))
     {
         return 0;
     }
@@ -397,7 +398,7 @@ rictus_intelligence_record_store_append(
 
     record = &store->records[store->count];
     memset(record, 0, sizeof(*record));
-    strcpy_s(record->id, sizeof(record->id), candidate);
+    snprintf(record->id, sizeof(record->id), "%s", candidate);
     record->item = *item;
     ++store->count;
 
