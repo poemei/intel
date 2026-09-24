@@ -1,6 +1,6 @@
 #ifndef RICTUS_WARNING_EXERCISE_H
 #define RICTUS_WARNING_EXERCISE_H
-#include "module.h"
+#include "rictus_module.h"
 #define RICTUS_WARNING_EXERCISE_MAX 128
 typedef enum { RICTUS_EXERCISE_HIGH=1, RICTUS_EXERCISE_CRITICAL=2 } rictus_exercise_severity_t;
 typedef struct { char id[32],created[32],created_by[64],ack_by[64]; rictus_exercise_severity_t severity; int private_delivered,channel_delivered,delivered,acknowledged; } rictus_warning_exercise_t;
