@@ -1,7 +1,7 @@
 #ifndef RICTUS_INTELLIGENCE_WARNING_H
 #define RICTUS_INTELLIGENCE_WARNING_H
 #include "doctrine.h"
-#include "module.h"
+#include "rictus_module.h"
 #define RICTUS_WARNING_MAX 1024
 typedef struct { char id[32],int_id[32],indicator[64],reason[512],created[32],ack_by[64]; rictus_intelligence_severity_t severity; rictus_intelligence_confidence_t confidence; int delivered,acknowledged; } rictus_warning_record_t;
 typedef struct { rictus_warning_record_t records[RICTUS_WARNING_MAX]; size_t count; } rictus_warning_store_t;
