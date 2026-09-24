@@ -3172,10 +3172,6 @@ rictus_intelligence_start(
     const rictus_module_host_t* host
 )
 {
-    HANDLE stop_event;
-
-    HANDLE thread;
-
     rictus_intelligence_seen_result_t
         seen_result;
 
@@ -3192,27 +3188,14 @@ rictus_intelligence_start(
     }
 
 
-    if (
-        InterlockedCompareExchange(
-            &g_intelligence_running,
-            0,
-            0
-        ) != 0
-        )
+    if (g_intelligence_running != 0)
     {
         return
             RICTUS_MODULE_ERR_INVALID_STATE;
     }
 
 
-    if (
-        g_intelligence_thread != NULL ||
-        g_intelligence_stop_event != NULL
-        )
-    {
-        return
-            RICTUS_MODULE_ERR_INVALID_STATE;
-    }
+    if (g_intelligence_thread_active) { return RICTUS_MODULE_ERR_INVALID_STATE; }
 
 
     g_intelligence_host =
@@ -3563,144 +3546,28 @@ rictus_intelligence_start(
     rictus_warning_exercise_deliver(&g_warning_exercise_store,g_intelligence_host->send_message);
 
 
-    stop_event =
-        CreateEventA(
-            NULL,
-            TRUE,
-            FALSE,
-            NULL
-        );
+    pthread_mutex_lock(&g_intelligence_stop_mutex);
+    g_intelligence_stop_requested = 0;
+    pthread_mutex_unlock(&g_intelligence_stop_mutex);
 
-
-    if (
-        stop_event == NULL
-        )
+    if (pthread_create(&g_intelligence_thread, NULL, rictus_intelligence_worker, NULL) != 0)
     {
-        (void)g_intelligence_host->unregister_command("reject",NULL);
-        (void)g_intelligence_host->unregister_command("warn",NULL);
+        (void)g_intelligence_host->unregister_command("reject", NULL);
+        (void)g_intelligence_host->unregister_command("warn", NULL);
         (void)g_intelligence_host->unregister_command("sigint", NULL);
-        (void)
-            g_intelligence_host->unregister_command(
-                "rag",
-                NULL
-            );
-
-        (void)
-            g_intelligence_host->unregister_command(
-                "chain",
-                NULL
-            );
-
-        (void)
-            g_intelligence_host->unregister_command(
-                "approve",
-                NULL
-            );
-
-        (void)
-            g_intelligence_host->unregister_command(
-                "srt",
-                NULL
-            );
-
-
-        (void)
-            g_intelligence_host->unregister_command(
-                "show",
-                NULL
-            );
-
-
-        g_intelligence_host =
-            NULL;
-
-
-        return
-            RICTUS_MODULE_ERR_START_FAILED;
+        (void)g_intelligence_host->unregister_command("rag", NULL);
+        (void)g_intelligence_host->unregister_command("chain", NULL);
+        (void)g_intelligence_host->unregister_command("approve", NULL);
+        (void)g_intelligence_host->unregister_command("srt", NULL);
+        (void)g_intelligence_host->unregister_command("show", NULL);
+        g_intelligence_host = NULL;
+        return RICTUS_MODULE_ERR_START_FAILED;
     }
 
-
-    g_intelligence_stop_event =
-        stop_event;
-
-
-    thread =
-        CreateThread(
-            NULL,
-            0,
-            rictus_intelligence_worker,
-            NULL,
-            0,
-            NULL
-        );
-
-
-    if (
-        thread == NULL
-        )
-    {
-        CloseHandle(
-            g_intelligence_stop_event
-        );
-
-
-        g_intelligence_stop_event =
-            NULL;
-
-        (void)g_intelligence_host->unregister_command("reject",NULL);
-        (void)g_intelligence_host->unregister_command("warn",NULL);
-        (void)g_intelligence_host->unregister_command("sigint", NULL);
-
-
-        (void)
-            g_intelligence_host->unregister_command(
-                "rag",
-                NULL
-            );
-
-        (void)
-            g_intelligence_host->unregister_command(
-                "chain",
-                NULL
-            );
-
-        (void)
-            g_intelligence_host->unregister_command(
-                "approve",
-                NULL
-            );
-
-        (void)
-            g_intelligence_host->unregister_command(
-                "srt",
-                NULL
-            );
-
-        (void)
-            g_intelligence_host->unregister_command(
-                "show",
-                NULL
-            );
-
-
-        g_intelligence_host =
-            NULL;
-
-
-        return
-            RICTUS_MODULE_ERR_START_FAILED;
-    }
-
-
-    g_intelligence_thread =
-        thread;
-
-
-    InterlockedExchange(
-        &g_intelligence_running,
-        1
-    );
-
+    g_intelligence_thread_active = 1;
+    pthread_mutex_lock(&g_intelligence_stop_mutex);
+    g_intelligence_running = 1;
+    pthread_mutex_unlock(&g_intelligence_stop_mutex);
 
     printf(
         "[INTELLIGENCE] Module ACTIVE.\n"
@@ -3721,68 +3588,18 @@ rictus_intelligence_start(
 static rictus_module_result_t
 rictus_intelligence_stop(void)
 {
-    DWORD wait_result;
+    if (!g_intelligence_thread_active) return RICTUS_MODULE_ERR_INVALID_STATE;
 
+    printf("[INTELLIGENCE] Stop requested.\n");
+    pthread_mutex_lock(&g_intelligence_stop_mutex);
+    g_intelligence_stop_requested = 1;
+    pthread_cond_broadcast(&g_intelligence_stop_cond);
+    pthread_mutex_unlock(&g_intelligence_stop_mutex);
 
-    if (
-        g_intelligence_thread == NULL ||
-        g_intelligence_stop_event == NULL
-        )
-    {
-        return
-            RICTUS_MODULE_ERR_INVALID_STATE;
-    }
+    if (pthread_join(g_intelligence_thread, NULL) != 0)
+        return RICTUS_MODULE_ERR_STOP_FAILED;
 
-
-    printf(
-        "[INTELLIGENCE] Stop requested.\n"
-    );
-
-
-    if (
-        !SetEvent(
-            g_intelligence_stop_event
-        )
-        )
-    {
-        return
-            RICTUS_MODULE_ERR_STOP_FAILED;
-    }
-
-
-    wait_result =
-        WaitForSingleObject(
-            g_intelligence_thread,
-            INFINITE
-        );
-
-
-    if (
-        wait_result !=
-        WAIT_OBJECT_0
-        )
-    {
-        return
-            RICTUS_MODULE_ERR_STOP_FAILED;
-    }
-
-
-    CloseHandle(
-        g_intelligence_thread
-    );
-
-
-    g_intelligence_thread =
-        NULL;
-
-
-    CloseHandle(
-        g_intelligence_stop_event
-    );
-
-
-    g_intelligence_stop_event =
-        NULL;
+    g_intelligence_thread_active = 0;
 
     if(!g_intelligence_host->unregister_command("reject",NULL))return RICTUS_MODULE_ERR_STOP_FAILED;
     if(!g_intelligence_host->unregister_command("warn",NULL))return RICTUS_MODULE_ERR_STOP_FAILED;
@@ -3883,10 +3700,9 @@ rictus_intelligence_stop(void)
         NULL;
 
 
-    InterlockedExchange(
-        &g_intelligence_running,
-        0
-    );
+    pthread_mutex_lock(&g_intelligence_stop_mutex);
+    g_intelligence_running = 0;
+    pthread_mutex_unlock(&g_intelligence_stop_mutex);
 
 
     printf(
