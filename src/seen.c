@@ -10,6 +10,9 @@
 #include <stdio.h>
 #include <string.h>
 #include <strings.h>
+#include <errno.h>
+#include <sys/stat.h>
+#include <sys/types.h>
 
 #include "seen.h"
 
@@ -29,65 +32,32 @@ rictus_intelligence_seen_paths(
     size_t path_size
 )
 {
-    if (
-        directory == NULL ||
-        path == NULL
-    )
-    {
-        return 0;
-    }
+    int written;
 
+    if (directory == NULL || path == NULL) return 0;
 
-    if (
-        !rictus_path_join(
-            directory,
-            directory_size,
-            rictus_runtime_root(),
-            RICTUS_INTELLIGENCE_STATE_NAME
-        )
-    )
-    {
-        return 0;
-    }
+    written = snprintf(directory, directory_size, "state/%s",
+        RICTUS_INTELLIGENCE_STATE_NAME);
+    if (written < 0 || (size_t)written >= directory_size) return 0;
 
-
-    if (
-        !rictus_path_join(
-            path,
-            path_size,
-            directory,
-            RICTUS_INTELLIGENCE_SEEN_FILENAME
-        )
-    )
-    {
-        return 0;
-    }
-
-
-    return 1;
+    written = snprintf(path, path_size, "%s/%s", directory,
+        RICTUS_INTELLIGENCE_SEEN_FILENAME);
+    return written >= 0 && (size_t)written < path_size;
 }
-
 
 static int
-rictus_intelligence_seen_ensure_directory(
-    const char *directory
-)
+rictus_intelligence_seen_ensure_directory(const char *directory)
 {
-    if (
-        directory == NULL ||
-        directory[0] == '\0'
-    )
-    {
-        return 0;
-    }
+    struct stat st;
 
+    if (directory == NULL || directory[0] == '\0') return 0;
 
-    return
-        rictus_directory_create_all(
-            directory
-        );
+    if (mkdir("state", 0750) != 0 && errno != EEXIST) return 0;
+    if (mkdir(directory, 0750) != 0 && errno != EEXIST) return 0;
+
+    if (stat(directory, &st) != 0) return 0;
+    return S_ISDIR(st.st_mode);
 }
-
 
 void
 rictus_intelligence_seen_init(
