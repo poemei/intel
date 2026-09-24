@@ -1371,251 +1371,49 @@ rictus_intelligence_chain_execute(
     const char *report_path,
     char *output,
     size_t output_size,
-    DWORD *exit_code
+    int *exit_code
 )
 {
-    SECURITY_ATTRIBUTES security_attributes;
-    STARTUPINFOA startup_info;
-    PROCESS_INFORMATION process_info;
+    int pipefd[2];
+    pid_t pid;
+    size_t used = 0;
+    int status;
 
-    HANDLE read_pipe =
-        NULL;
+    if (!report_path || !output || output_size < 2 || !exit_code) return 0;
+    output[0] = '\0';
+    *exit_code = -1;
+    if (pipe(pipefd) != 0) return 0;
 
-    HANDLE write_pipe =
-        NULL;
-
-    char command_line[
-        RICTUS_INTELLIGENCE_SRT_PATH_MAX +
-        1024
-    ];
-
-    DWORD bytes_read;
-    size_t used =
-        0;
-
-    int written;
-    BOOL process_created;
-
-    if (
-        report_path == NULL ||
-        output == NULL ||
-        output_size < 2 ||
-        exit_code == NULL
-        )
-    {
-        return 0;
+    pid = fork();
+    if (pid < 0) { close(pipefd[0]); close(pipefd[1]); return 0; }
+    if (pid == 0) {
+        dup2(pipefd[1], STDOUT_FILENO);
+        dup2(pipefd[1], STDERR_FILENO);
+        close(pipefd[0]);
+        close(pipefd[1]);
+        execlp("chain", "chain", report_path, RICTUS_INTELLIGENCE_CHAIN_INDEX_PATH, (char *)NULL);
+        _exit(127);
     }
 
-    output[0] =
-        '\0';
-
-    *exit_code =
-        (DWORD)-1;
-
-    memset(
-        &security_attributes,
-        0,
-        sizeof(security_attributes)
-    );
-
-    security_attributes.nLength =
-        sizeof(security_attributes);
-
-    security_attributes.bInheritHandle =
-        TRUE;
-
-    if (
-        !CreatePipe(
-            &read_pipe,
-            &write_pipe,
-            &security_attributes,
-            0
-        )
-        )
-    {
-        return 0;
-    }
-
-    if (
-        !SetHandleInformation(
-            read_pipe,
-            HANDLE_FLAG_INHERIT,
-            0
-        )
-        )
-    {
-        CloseHandle(read_pipe);
-        CloseHandle(write_pipe);
-
-        return 0;
-    }
-
-    written =
-        snprintf(
-            command_line,
-            sizeof(command_line),
-            "chain \"%s\" \"%s\"",
-            report_path,
-            RICTUS_INTELLIGENCE_CHAIN_INDEX_PATH
-        );
-
-    if (
-        written <= 0 ||
-        written >= (int)sizeof(command_line)
-        )
-    {
-        CloseHandle(read_pipe);
-        CloseHandle(write_pipe);
-
-        return 0;
-    }
-
-    memset(
-        &startup_info,
-        0,
-        sizeof(startup_info)
-    );
-
-    startup_info.cb =
-        sizeof(startup_info);
-
-    startup_info.dwFlags =
-        STARTF_USESTDHANDLES;
-
-    startup_info.hStdOutput =
-        write_pipe;
-
-    startup_info.hStdError =
-        write_pipe;
-
-    startup_info.hStdInput =
-        GetStdHandle(
-            STD_INPUT_HANDLE
-        );
-
-    memset(
-        &process_info,
-        0,
-        sizeof(process_info)
-    );
-
-    process_created =
-        CreateProcessA(
-            NULL,
-            command_line,
-            NULL,
-            NULL,
-            TRUE,
-            CREATE_NO_WINDOW,
-            NULL,
-            NULL,
-            &startup_info,
-            &process_info
-        );
-
-    CloseHandle(
-        write_pipe
-    );
-
-    write_pipe =
-        NULL;
-
-    if (
-        !process_created
-        )
-    {
-        CloseHandle(
-            read_pipe
-        );
-
-        return 0;
-    }
-
-    for (;;)
-    {
+    close(pipefd[1]);
+    for (;;) {
         char buffer[512];
-
-        if (
-            !ReadFile(
-                read_pipe,
-                buffer,
-                sizeof(buffer),
-                &bytes_read,
-                NULL
-            ) ||
-            bytes_read == 0
-            )
-        {
-            break;
-        }
-
-        if (
-            used <
-            output_size - 1
-            )
-        {
-            size_t available =
-                output_size -
-                1 -
-                used;
-
-            size_t copy_size =
-                bytes_read;
-
-            if (
-                copy_size >
-                available
-                )
-            {
-                copy_size =
-                    available;
-            }
-
-            memcpy(
-                output + used,
-                buffer,
-                copy_size
-            );
-
-            used +=
-                copy_size;
-
-            output[used] =
-                '\0';
+        ssize_t n = read(pipefd[0], buffer, sizeof(buffer));
+        if (n <= 0) break;
+        if (used < output_size - 1) {
+            size_t available = output_size - 1 - used;
+            size_t copy_size = (size_t)n < available ? (size_t)n : available;
+            memcpy(output + used, buffer, copy_size);
+            used += copy_size;
+            output[used] = '\0';
         }
     }
-
-    CloseHandle(
-        read_pipe
-    );
-
-    WaitForSingleObject(
-        process_info.hProcess,
-        INFINITE
-    );
-
-    if (
-        !GetExitCodeProcess(
-            process_info.hProcess,
-            exit_code
-        )
-        )
-    {
-        *exit_code =
-            (DWORD)-1;
-    }
-
-    CloseHandle(
-        process_info.hThread
-    );
-
-    CloseHandle(
-        process_info.hProcess
-    );
-
+    close(pipefd[0]);
+    if (waitpid(pid, &status, 0) < 0) return 0;
+    if (WIFEXITED(status)) *exit_code = WEXITSTATUS(status);
+    else if (WIFSIGNALED(status)) *exit_code = 128 + WTERMSIG(status);
     return 1;
 }
-
 
 static rictus_module_result_t
 rictus_intelligence_command_chain(
@@ -1639,7 +1437,7 @@ rictus_intelligence_command_chain(
 
     char response[1200];
 
-    DWORD exit_code;
+    int exit_code;
 
     int written;
 
@@ -2536,7 +2334,7 @@ rictus_intelligence_command_rag(
     ];
 
     DWORD attributes;
-    DWORD exit_code;
+    int exit_code;
     int written;
 
 
