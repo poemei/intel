@@ -127,6 +127,56 @@ static int threat_json_baseline_store(void)
     return close(fd) == 0;
 }
 
+static int rictus_intelligence_stop_wait(unsigned long milliseconds)
+{
+    int stopped = 0;
+    struct timespec deadline;
+
+    pthread_mutex_lock(&g_intelligence_stop_mutex);
+    if (!g_intelligence_stop_requested && milliseconds > 0) {
+        clock_gettime(CLOCK_REALTIME, &deadline);
+        deadline.tv_sec += (time_t)(milliseconds / 1000UL);
+        deadline.tv_nsec += (long)(milliseconds % 1000UL) * 1000000L;
+        if (deadline.tv_nsec >= 1000000000L) { ++deadline.tv_sec; deadline.tv_nsec -= 1000000000L; }
+        while (!g_intelligence_stop_requested) {
+            int rc = pthread_cond_timedwait(&g_intelligence_stop_cond, &g_intelligence_stop_mutex, &deadline);
+            if (rc == ETIMEDOUT) break;
+            if (rc != 0) break;
+        }
+    }
+    stopped = g_intelligence_stop_requested;
+    pthread_mutex_unlock(&g_intelligence_stop_mutex);
+    return stopped;
+}
+
+static int rictus_intelligence_file_is_regular(const char *path)
+{
+    struct stat st;
+    return path && stat(path, &st) == 0 && S_ISREG(st.st_mode);
+}
+
+static int rictus_intelligence_directory_exists(const char *path)
+{
+    struct stat st;
+    return path && stat(path, &st) == 0 && S_ISDIR(st.st_mode);
+}
+
+static int rictus_intelligence_copy_file(const char *source, const char *destination)
+{
+    FILE *in = fopen(source, "rb");
+    FILE *out;
+    char buffer[8192];
+    size_t n;
+    if (!in) return 0;
+    out = fopen(destination, "wb");
+    if (!out) { fclose(in); return 0; }
+    while ((n = fread(buffer, 1, sizeof(buffer), in)) > 0)
+        if (fwrite(buffer, 1, n, out) != n) { fclose(in); fclose(out); unlink(destination); return 0; }
+    if (ferror(in) || fflush(out) != 0) { fclose(in); fclose(out); unlink(destination); return 0; }
+    fclose(in);
+    return fclose(out) == 0;
+}
+
 static int rictus_intelligence_copy(char *dst, size_t size, const char *src)
 {
     int written;
@@ -1510,7 +1560,7 @@ rictus_intelligence_command_chain(
         snprintf(
             report_path,
             sizeof(report_path),
-            "%s\\%s.srt.md",
+            "%s/%s.srt.md",
             RICTUS_INTELLIGENCE_SRT_DIRECTORY,
             command->arguments
         );
@@ -1535,12 +1585,7 @@ rictus_intelligence_command_chain(
             RICTUS_MODULE_OK;
     }
 
-    if (
-        GetFileAttributesA(
-            report_path
-        ) ==
-        INVALID_FILE_ATTRIBUTES
-        )
+    if (!rictus_intelligence_file_is_regular(report_path))
     {
         snprintf(
             response,
@@ -2012,7 +2057,6 @@ rictus_intelligence_command_rag(
         1200
     ];
 
-    DWORD attributes;
     int exit_code;
     int written;
 
@@ -2092,7 +2136,7 @@ rictus_intelligence_command_rag(
         snprintf(
             source_path,
             sizeof(source_path),
-            "%s\\%s.srt.md",
+            "%s/%s.srt.md",
             RICTUS_INTELLIGENCE_SRT_DIRECTORY,
             command->arguments
         );
@@ -2120,20 +2164,7 @@ rictus_intelligence_command_rag(
     }
 
 
-    attributes =
-        GetFileAttributesA(
-            source_path
-        );
-
-
-    if (
-        attributes ==
-            INVALID_FILE_ATTRIBUTES ||
-        (
-            attributes &
-            FILE_ATTRIBUTE_DIRECTORY
-        ) != 0
-        )
+    if (!rictus_intelligence_file_is_regular(source_path))
     {
         snprintf(
             response,
@@ -2160,20 +2191,7 @@ rictus_intelligence_command_rag(
     }
 
 
-    attributes =
-        GetFileAttributesA(
-            RICTUS_INTELLIGENCE_RAG_INPUT_DIRECTORY
-        );
-
-
-    if (
-        attributes ==
-            INVALID_FILE_ATTRIBUTES ||
-        (
-            attributes &
-            FILE_ATTRIBUTE_DIRECTORY
-        ) == 0
-        )
+    if (!rictus_intelligence_directory_exists(RICTUS_INTELLIGENCE_RAG_INPUT_DIRECTORY))
     {
         if (
             !reply(
@@ -2196,7 +2214,7 @@ rictus_intelligence_command_rag(
         snprintf(
             destination_path,
             sizeof(destination_path),
-            "%s\\%s.srt.md",
+            "%s/%s.srt.md",
             RICTUS_INTELLIGENCE_RAG_INPUT_DIRECTORY,
             command->arguments
         );
@@ -2225,20 +2243,12 @@ rictus_intelligence_command_rag(
     }
 
 
-    if (
-        !CopyFileA(
-            source_path,
-            destination_path,
-            FALSE
-        )
-        )
+    if (!rictus_intelligence_copy_file(source_path, destination_path))
     {
         snprintf(
             response,
             sizeof(response),
-            "RAG FAILED | %s | COPY FAILED | WIN32=%lu",
-            command->arguments,
-            (unsigned long)GetLastError()
+            "RAG FAILED | %s | COPY FAILED", command->arguments
         );
 
 
