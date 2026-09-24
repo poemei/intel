@@ -24,12 +24,13 @@
  * corpus.
  */
 
-#ifdef _WIN32
-#define WIN32_LEAN_AND_MEAN
-#include <windows.h>
-#else
-#include "win_compat_posix.h"
-#endif
+#include <errno.h>
+#include <pthread.h>
+#include <strings.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <time.h>
+#include <unistd.h>
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -475,13 +476,13 @@ rictus_intelligence_command_warn(const rictus_module_command_t *command,rictus_m
 {
     char response[700],exercise_id[32];const rictus_warning_record_t *record;const rictus_warning_exercise_t *exercise;size_t i;unsigned int pending=0,critical_unacked=0;(void)unused;
     if(!command||!reply)return RICTUS_MODULE_ERR_INVALID_ARGUMENT;
-    if(_stricmp(command->arguments,"exercise status")==0){unsigned int exercise_pending=0,exercise_unacked=0;for(i=0;i<g_warning_exercise_store.count;++i){if(!g_warning_exercise_store.records[i].delivered)++exercise_pending;if(g_warning_exercise_store.records[i].severity==RICTUS_EXERCISE_CRITICAL&&!g_warning_exercise_store.records[i].acknowledged)++exercise_unacked;}sprintf_s(response,sizeof(response),"Warning exercises=%u | delivery pending=%u | CRITICAL unacknowledged=%u | production warnings unaffected",(unsigned)g_warning_exercise_store.count,exercise_pending,exercise_unacked);return reply(context,response)?RICTUS_MODULE_OK:RICTUS_MODULE_ERR_START_FAILED;}
-    if(_stricmp(command->arguments,"exercise high")==0||_stricmp(command->arguments,"exercise critical")==0){rictus_exercise_severity_t severity=_stricmp(command->arguments,"exercise critical")==0?RICTUS_EXERCISE_CRITICAL:RICTUS_EXERCISE_HIGH;if(_stricmp(command->sender,"STN_Boss")!=0&&_stricmp(command->account,"STN_Boss")!=0)return reply(context,"Warning exercise refused: direct STN_Boss role authority required.")?RICTUS_MODULE_OK:RICTUS_MODULE_ERR_START_FAILED;if(!rictus_warning_exercise_create(&g_warning_exercise_store,severity,command->sender,exercise_id))return reply(context,"Warning exercise creation failed.")?RICTUS_MODULE_OK:RICTUS_MODULE_ERR_START_FAILED;rictus_warning_exercise_deliver(&g_warning_exercise_store,g_intelligence_host->send_message);sprintf_s(response,sizeof(response),"EXERCISE CREATED | %s | %s | isolated from production evidence and lifecycle state",exercise_id,severity==RICTUS_EXERCISE_CRITICAL?"CRITICAL":"HIGH");return reply(context,response)?RICTUS_MODULE_OK:RICTUS_MODULE_ERR_START_FAILED;}
-    if(_strnicmp(command->arguments,"exercise show ",14)==0){exercise=rictus_warning_exercise_find(&g_warning_exercise_store,command->arguments+14);if(!exercise)return reply(context,"Warning exercise not found.")?RICTUS_MODULE_OK:RICTUS_MODULE_ERR_START_FAILED;sprintf_s(response,sizeof(response),"%s | [EXERCISE] %s | delivered=%s | acknowledged=%s | created by=%s",exercise->id,exercise->severity==RICTUS_EXERCISE_CRITICAL?"CRITICAL":"HIGH",exercise->delivered?"YES":"NO",exercise->acknowledged?"YES":"NO",exercise->created_by);if(!reply(context,response))return RICTUS_MODULE_ERR_START_FAILED;return reply(context,"TEST FIXTURE ONLY | no INT, production WARN, remediation, or lifecycle authority created")?RICTUS_MODULE_OK:RICTUS_MODULE_ERR_START_FAILED;}
-    if(_strnicmp(command->arguments,"exercise ack ",13)==0){if(_stricmp(command->sender,"STN_Boss")!=0&&_stricmp(command->account,"STN_Boss")!=0)return reply(context,"Exercise acknowledgment refused: STN_Boss role required.")?RICTUS_MODULE_OK:RICTUS_MODULE_ERR_START_FAILED;if(!rictus_warning_exercise_ack(&g_warning_exercise_store,command->arguments+13,command->sender))return reply(context,"Warning exercise acknowledgment failed or exercise not found.")?RICTUS_MODULE_OK:RICTUS_MODULE_ERR_START_FAILED;sprintf_s(response,sizeof(response),"EXERCISE ACKNOWLEDGED | %s | receipt test only; no operational action authorized",command->arguments+13);return reply(context,response)?RICTUS_MODULE_OK:RICTUS_MODULE_ERR_START_FAILED;}
-    if(_stricmp(command->arguments,"status")==0){for(i=0;i<g_warning_store.count;++i){if(!g_warning_store.records[i].delivered)++pending;if(g_warning_store.records[i].severity==RICTUS_INTELLIGENCE_SEVERITY_CRITICAL&&!g_warning_store.records[i].acknowledged)++critical_unacked;}sprintf_s(response,sizeof(response),"Warnings=%u | delivery pending=%u | CRITICAL unacknowledged=%u",(unsigned)g_warning_store.count,pending,critical_unacked);return reply(context,response)?RICTUS_MODULE_OK:RICTUS_MODULE_ERR_START_FAILED;}
-    if(_strnicmp(command->arguments,"show ",5)==0){record=rictus_warning_find(&g_warning_store,command->arguments+5);if(!record)return reply(context,"Warning not found.")?RICTUS_MODULE_OK:RICTUS_MODULE_ERR_START_FAILED;sprintf_s(response,sizeof(response),"%s | %s | confidence=%s | INT=%s | indicator=%s",record->id,rictus_intelligence_severity_string(record->severity),record->confidence==RICTUS_INTELLIGENCE_CONFIDENCE_HIGH?"HIGH":"MODERATE",record->int_id,record->indicator);if(!reply(context,response))return RICTUS_MODULE_ERR_START_FAILED;sprintf_s(response,sizeof(response),"Delivered=%s | acknowledged=%s | %s",record->delivered?"YES":"NO",record->acknowledged?"YES":"NO",record->reason);if(!reply(context,response))return RICTUS_MODULE_ERR_START_FAILED;return reply(context,"Acknowledgment records receipt only; no remediation or lifecycle action is authorized.")?RICTUS_MODULE_OK:RICTUS_MODULE_ERR_START_FAILED;}
-    if(_strnicmp(command->arguments,"ack ",4)==0){if(!rictus_warning_ack(&g_warning_store,command->arguments+4,command->sender))return reply(context,"Warning acknowledgment failed or warning not found.")?RICTUS_MODULE_OK:RICTUS_MODULE_ERR_START_FAILED;sprintf_s(response,sizeof(response),"ACKNOWLEDGED | %s | by %s | receipt only; no operational action authorized",command->arguments+4,command->sender);return reply(context,response)?RICTUS_MODULE_OK:RICTUS_MODULE_ERR_START_FAILED;}
+    if(strcasecmp(command->arguments,"exercise status")==0){unsigned int exercise_pending=0,exercise_unacked=0;for(i=0;i<g_warning_exercise_store.count;++i){if(!g_warning_exercise_store.records[i].delivered)++exercise_pending;if(g_warning_exercise_store.records[i].severity==RICTUS_EXERCISE_CRITICAL&&!g_warning_exercise_store.records[i].acknowledged)++exercise_unacked;}sprintf_s(response,sizeof(response),"Warning exercises=%u | delivery pending=%u | CRITICAL unacknowledged=%u | production warnings unaffected",(unsigned)g_warning_exercise_store.count,exercise_pending,exercise_unacked);return reply(context,response)?RICTUS_MODULE_OK:RICTUS_MODULE_ERR_START_FAILED;}
+    if(strcasecmp(command->arguments,"exercise high")==0||strcasecmp(command->arguments,"exercise critical")==0){rictus_exercise_severity_t severity=strcasecmp(command->arguments,"exercise critical")==0?RICTUS_EXERCISE_CRITICAL:RICTUS_EXERCISE_HIGH;if(strcasecmp(command->sender,"STN_Boss")!=0&&strcasecmp(command->account,"STN_Boss")!=0)return reply(context,"Warning exercise refused: direct STN_Boss role authority required.")?RICTUS_MODULE_OK:RICTUS_MODULE_ERR_START_FAILED;if(!rictus_warning_exercise_create(&g_warning_exercise_store,severity,command->sender,exercise_id))return reply(context,"Warning exercise creation failed.")?RICTUS_MODULE_OK:RICTUS_MODULE_ERR_START_FAILED;rictus_warning_exercise_deliver(&g_warning_exercise_store,g_intelligence_host->send_message);sprintf_s(response,sizeof(response),"EXERCISE CREATED | %s | %s | isolated from production evidence and lifecycle state",exercise_id,severity==RICTUS_EXERCISE_CRITICAL?"CRITICAL":"HIGH");return reply(context,response)?RICTUS_MODULE_OK:RICTUS_MODULE_ERR_START_FAILED;}
+    if(strncasecmp(command->arguments,"exercise show ",14)==0){exercise=rictus_warning_exercise_find(&g_warning_exercise_store,command->arguments+14);if(!exercise)return reply(context,"Warning exercise not found.")?RICTUS_MODULE_OK:RICTUS_MODULE_ERR_START_FAILED;sprintf_s(response,sizeof(response),"%s | [EXERCISE] %s | delivered=%s | acknowledged=%s | created by=%s",exercise->id,exercise->severity==RICTUS_EXERCISE_CRITICAL?"CRITICAL":"HIGH",exercise->delivered?"YES":"NO",exercise->acknowledged?"YES":"NO",exercise->created_by);if(!reply(context,response))return RICTUS_MODULE_ERR_START_FAILED;return reply(context,"TEST FIXTURE ONLY | no INT, production WARN, remediation, or lifecycle authority created")?RICTUS_MODULE_OK:RICTUS_MODULE_ERR_START_FAILED;}
+    if(strncasecmp(command->arguments,"exercise ack ",13)==0){if(strcasecmp(command->sender,"STN_Boss")!=0&&strcasecmp(command->account,"STN_Boss")!=0)return reply(context,"Exercise acknowledgment refused: STN_Boss role required.")?RICTUS_MODULE_OK:RICTUS_MODULE_ERR_START_FAILED;if(!rictus_warning_exercise_ack(&g_warning_exercise_store,command->arguments+13,command->sender))return reply(context,"Warning exercise acknowledgment failed or exercise not found.")?RICTUS_MODULE_OK:RICTUS_MODULE_ERR_START_FAILED;sprintf_s(response,sizeof(response),"EXERCISE ACKNOWLEDGED | %s | receipt test only; no operational action authorized",command->arguments+13);return reply(context,response)?RICTUS_MODULE_OK:RICTUS_MODULE_ERR_START_FAILED;}
+    if(strcasecmp(command->arguments,"status")==0){for(i=0;i<g_warning_store.count;++i){if(!g_warning_store.records[i].delivered)++pending;if(g_warning_store.records[i].severity==RICTUS_INTELLIGENCE_SEVERITY_CRITICAL&&!g_warning_store.records[i].acknowledged)++critical_unacked;}sprintf_s(response,sizeof(response),"Warnings=%u | delivery pending=%u | CRITICAL unacknowledged=%u",(unsigned)g_warning_store.count,pending,critical_unacked);return reply(context,response)?RICTUS_MODULE_OK:RICTUS_MODULE_ERR_START_FAILED;}
+    if(strncasecmp(command->arguments,"show ",5)==0){record=rictus_warning_find(&g_warning_store,command->arguments+5);if(!record)return reply(context,"Warning not found.")?RICTUS_MODULE_OK:RICTUS_MODULE_ERR_START_FAILED;sprintf_s(response,sizeof(response),"%s | %s | confidence=%s | INT=%s | indicator=%s",record->id,rictus_intelligence_severity_string(record->severity),record->confidence==RICTUS_INTELLIGENCE_CONFIDENCE_HIGH?"HIGH":"MODERATE",record->int_id,record->indicator);if(!reply(context,response))return RICTUS_MODULE_ERR_START_FAILED;sprintf_s(response,sizeof(response),"Delivered=%s | acknowledged=%s | %s",record->delivered?"YES":"NO",record->acknowledged?"YES":"NO",record->reason);if(!reply(context,response))return RICTUS_MODULE_ERR_START_FAILED;return reply(context,"Acknowledgment records receipt only; no remediation or lifecycle action is authorized.")?RICTUS_MODULE_OK:RICTUS_MODULE_ERR_START_FAILED;}
+    if(strncasecmp(command->arguments,"ack ",4)==0){if(!rictus_warning_ack(&g_warning_store,command->arguments+4,command->sender))return reply(context,"Warning acknowledgment failed or warning not found.")?RICTUS_MODULE_OK:RICTUS_MODULE_ERR_START_FAILED;sprintf_s(response,sizeof(response),"ACKNOWLEDGED | %s | by %s | receipt only; no operational action authorized",command->arguments+4,command->sender);return reply(context,response)?RICTUS_MODULE_OK:RICTUS_MODULE_ERR_START_FAILED;}
     return reply(context,"Usage: !warn status|show WARN-*|ack WARN-*|exercise status|high|critical|show EXWARN-*|ack EXWARN-*")?RICTUS_MODULE_OK:RICTUS_MODULE_ERR_START_FAILED;
 }
 
@@ -491,18 +492,18 @@ rictus_intelligence_command_sigint(const rictus_module_command_t* command,
 {
     char response[256]; (void)handler_context;
     if (command == NULL || reply == NULL) return RICTUS_MODULE_ERR_INVALID_ARGUMENT;
-    if (_stricmp(command->arguments,"requirements")==0)
+    if (strcasecmp(command->arguments,"requirements")==0)
     {
         if(!reply(reply_context,"Requirements=5 | priority 1=2 | priority 2=2 | priority 3=1 | mode=SHADOW"))return RICTUS_MODULE_ERR_START_FAILED;
         if(!reply(reply_context,"P1: IR-001 protected-boundary warning; IR-002 bypass or compromise evidence"))return RICTUS_MODULE_ERR_START_FAILED;
         return reply(reply_context,"P2/P3: fleet pattern; deployed-version applicability; collection performance")?RICTUS_MODULE_OK:RICTUS_MODULE_ERR_START_FAILED;
     }
-    if (_stricmp(command->arguments,"gaps")==0)
+    if (strcasecmp(command->arguments,"gaps")==0)
     {
         if(!reply(reply_context,"Open collection gaps=3 | Sentinel outcome semantics | distinct sensor/site identity | deployed-version inventory"))return RICTUS_MODULE_ERR_START_FAILED;
         return reply(reply_context,"Gaps remain UNKNOWN evidence; they cannot raise severity, confidence, or lifecycle state.")?RICTUS_MODULE_OK:RICTUS_MODULE_ERR_START_FAILED;
     }
-    if (_stricmp(command->arguments,"sources")==0)
+    if (strcasecmp(command->arguments,"sources")==0)
     {
         unsigned int attempts=0,successes=0,failures=0,items=0;size_t i;
         for(i=0;i<g_collection_metric_count;++i){attempts+=g_collection_metrics[i].attempts;successes+=g_collection_metrics[i].successes;failures+=g_collection_metrics[i].failures;items+=g_collection_metrics[i].items;}
@@ -510,7 +511,7 @@ rictus_intelligence_command_sigint(const rictus_module_command_t* command,
         if(!reply(reply_context,response))return RICTUS_MODULE_ERR_START_FAILED;
         return reply(reply_context,"STN-LABZ sensors count as sensor diversity, never independent external corroboration. Evaluations are durably logged.")?RICTUS_MODULE_OK:RICTUS_MODULE_ERR_START_FAILED;
     }
-    if (_stricmp(command->arguments, "status") != 0)
+    if (strcasecmp(command->arguments, "status") != 0)
         return reply(reply_context, "Usage: !sigint status|requirements|gaps|sources") ? RICTUS_MODULE_OK : RICTUS_MODULE_ERR_START_FAILED;
     snprintf(response, sizeof(response), "Intelligence %u.%u.%u | ABI %u.%u | state=ACTIVE",
         RICTUS_INTELLIGENCE_VERSION_MAJOR, RICTUS_INTELLIGENCE_VERSION_MINOR,
@@ -639,7 +640,7 @@ rictus_intelligence_command_srt(
         existing != NULL
         )
     {
-        if (_stricmp(existing->status, "REJECTED") == 0)
+        if (strcasecmp(existing->status, "REJECTED") == 0)
         {
             snprintf(response, sizeof(response),
                 "SRT REFUSED | %s | HUMAN DISPOSITION=REJECTED",
@@ -824,8 +825,8 @@ rictus_intelligence_command_reject(
     if (command->arguments[0] == '\0')
         return reply(reply_context, "Usage: !reject INT-XXXXXXXX")
             ? RICTUS_MODULE_OK : RICTUS_MODULE_ERR_START_FAILED;
-    if (_stricmp(command->sender, "STN_Boss") != 0 &&
-        _stricmp(command->account, "STN_Boss") != 0)
+    if (strcasecmp(command->sender, "STN_Boss") != 0 &&
+        strcasecmp(command->account, "STN_Boss") != 0)
         return reply(reply_context,
             "SRT REJECTION REFUSED | direct STN_Boss role authority required")
             ? RICTUS_MODULE_OK : RICTUS_MODULE_ERR_START_FAILED;
@@ -851,7 +852,7 @@ rictus_intelligence_command_reject(
         return reply(reply_context, response)
             ? RICTUS_MODULE_OK : RICTUS_MODULE_ERR_START_FAILED;
     }
-    if (_stricmp(existing->status, "REJECTED") == 0)
+    if (strcasecmp(existing->status, "REJECTED") == 0)
     {
         snprintf(response, sizeof(response),
             "SRT ALREADY REJECTED | %s | terminal human disposition retained",
@@ -859,7 +860,7 @@ rictus_intelligence_command_reject(
         return reply(reply_context, response)
             ? RICTUS_MODULE_OK : RICTUS_MODULE_ERR_START_FAILED;
     }
-    if (_stricmp(existing->status, "REQUESTED") != 0)
+    if (strcasecmp(existing->status, "REQUESTED") != 0)
     {
         snprintf(response, sizeof(response),
             "SRT REJECTION REFUSED | %s | STATUS=%s",
@@ -899,7 +900,7 @@ rictus_intelligence_reviewer_office(
 {
     if (
         sender != NULL &&
-        _stricmp(sender, "STN_Boss") == 0
+        strcasecmp(sender, "STN_Boss") == 0
         )
     {
         return "CEO / STN Boss";
@@ -974,7 +975,7 @@ rictus_intelligence_command_approve(
     }
 
     if (
-        _stricmp(existing->status, "APPROVED") == 0 &&
+        strcasecmp(existing->status, "APPROVED") == 0 &&
         existing->srt_id[0] != '\0'
         )
     {
@@ -995,7 +996,7 @@ rictus_intelligence_command_approve(
     }
 
     if (
-        _stricmp(existing->status, "REQUESTED") != 0
+        strcasecmp(existing->status, "REQUESTED") != 0
         )
     {
         snprintf(
@@ -1020,7 +1021,7 @@ rictus_intelligence_command_approve(
         );
 
     if (
-        _stricmp(office, "UNRESOLVED") == 0
+        strcasecmp(office, "UNRESOLVED") == 0
         )
     {
         if (
@@ -1671,7 +1672,7 @@ rictus_intelligence_command_chain(
     }
 
     if (
-        _strnicmp(
+        strncasecmp(
             command->arguments,
             "SRT-",
             4
@@ -1787,7 +1788,7 @@ rictus_intelligence_command_chain(
     }
 
     if (
-        _stricmp(
+        strcasecmp(
             status,
             "Approved"
         ) != 0
@@ -2572,7 +2573,7 @@ rictus_intelligence_command_rag(
 
 
     if (
-        _strnicmp(
+        strncasecmp(
             command->arguments,
             "SRT-",
             4
@@ -2917,7 +2918,7 @@ rictus_intelligence_contains_ci(const char *text, const char *needle)
     if (text == NULL || needle == NULL || needle[0] == '\0') return 0;
     length = strlen(needle);
     for (cursor = text; *cursor != '\0'; ++cursor)
-        if (_strnicmp(cursor, needle, length) == 0) return 1;
+        if (strncasecmp(cursor, needle, length) == 0) return 1;
     return 0;
 }
 
@@ -3067,7 +3068,7 @@ static int rictus_intelligence_id_list_contains(
 {
     size_t index;
     for (index = 0; index < count; ++index)
-        if (_stricmp(ids[index], id) == 0) return 1;
+        if (strcasecmp(ids[index], id) == 0) return 1;
     return 0;
 }
 
