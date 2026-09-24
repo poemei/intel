@@ -3524,6 +3524,7 @@ rictus_intelligence_start(
     }
     printf("[INTELLIGENCE] Command registered: sigint\n");
     if(!g_intelligence_host->register_command("warn",rictus_intelligence_command_warn,NULL)){(void)g_intelligence_host->unregister_command("sigint",NULL);(void)g_intelligence_host->unregister_command("rag",NULL);(void)g_intelligence_host->unregister_command("chain",NULL);(void)g_intelligence_host->unregister_command("approve",NULL);(void)g_intelligence_host->unregister_command("srt",NULL);(void)g_intelligence_host->unregister_command("show",NULL);g_intelligence_host=NULL;return RICTUS_MODULE_ERR_START_FAILED;}
+    printf("[INTELLIGENCE] Command registered: warn\n");
     if(!g_intelligence_host->register_command("reject",rictus_intelligence_command_reject,NULL)){(void)g_intelligence_host->unregister_command("warn",NULL);(void)g_intelligence_host->unregister_command("sigint",NULL);(void)g_intelligence_host->unregister_command("rag",NULL);(void)g_intelligence_host->unregister_command("chain",NULL);(void)g_intelligence_host->unregister_command("approve",NULL);(void)g_intelligence_host->unregister_command("srt",NULL);(void)g_intelligence_host->unregister_command("show",NULL);g_intelligence_host=NULL;return RICTUS_MODULE_ERR_START_FAILED;}
     printf("[INTELLIGENCE] Command registered: reject\n");
     rictus_warning_deliver(&g_warning_store,g_intelligence_host->send_message);
@@ -3586,7 +3587,9 @@ rictus_intelligence_stop(void)
     g_intelligence_thread_active = 0;
 
     if(!g_intelligence_host->unregister_command("reject",NULL))return RICTUS_MODULE_ERR_STOP_FAILED;
+    printf("[INTELLIGENCE] Command unregistered: reject\n");
     if(!g_intelligence_host->unregister_command("warn",NULL))return RICTUS_MODULE_ERR_STOP_FAILED;
+    printf("[INTELLIGENCE] Command unregistered: warn\n");
     if (!g_intelligence_host->unregister_command("sigint", NULL))
         return RICTUS_MODULE_ERR_STOP_FAILED;
 
