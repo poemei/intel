@@ -3,7 +3,7 @@ CC ?= cc
 CPPFLAGS := -D_POSIX_C_SOURCE=200809L -Iinclude -I../rictus/include -I../ABI/includes
 CFLAGS := -std=c17 -Wall -Wextra -Wpedantic -fPIC
 LDFLAGS := -shared
-LDLIBS := -lssl -lcrypto -pthread
+LDLIBS := -lcurl -lssl -lcrypto -pthread
 
 BUILD_DIR := build/linux
 TARGET := $(BUILD_DIR)/intelligence.so
