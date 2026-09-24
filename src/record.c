@@ -402,6 +402,6 @@ rictus_intelligence_record_store_append(
     record->item = *item;
     ++store->count;
 
-    strcpy_s(id, id_size, candidate);
+    snprintf(id, id_size, "%s", candidate);
     return 1;
 }
