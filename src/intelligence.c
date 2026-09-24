@@ -1197,14 +1197,7 @@ rictus_intelligence_chain_read_status(
 
     status[0] = '\0';
 
-    if (
-        fopen_s(
-            &fp,
-            report_path,
-            "rb"
-        ) != 0 ||
-        fp == NULL
-        )
+    if ((fp = fopen(report_path, "rb")) == NULL)
     {
         return 0;
     }
@@ -1312,14 +1305,7 @@ rictus_intelligence_chain_read_sha256(
 
     sha256[0] = '\0';
 
-    if (
-        fopen_s(
-            &fp,
-            report_path,
-            "rb"
-        ) != 0 ||
-        fp == NULL
-        )
+    if ((fp = fopen(report_path, "rb")) == NULL)
     {
         return 0;
     }
@@ -2571,7 +2557,7 @@ static int rictus_intelligence_notification_load(void)
     size_t index;
     g_intelligence_notified_count = 0;
     g_intelligence_pending_count = 0;
-    if (fopen_s(&file, g_intelligence_notified_path, "r") == 0 && file != NULL)
+    if ((file = fopen(g_intelligence_notified_path, "r")) != NULL)
     {
         while (fgets(line, sizeof(line), file) != NULL &&
             g_intelligence_notified_count < RICTUS_INTELLIGENCE_NOTIFICATION_MAX)
