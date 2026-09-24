@@ -776,9 +776,7 @@ rictus_intelligence_command_srt(
         )
         )
     {
-        DeleteFileA(
-            report_path
-        );
+        unlink(report_path);
 
 
         printf(
