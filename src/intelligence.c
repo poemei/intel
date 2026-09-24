@@ -29,6 +29,9 @@
 #include <strings.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <sys/wait.h>
+#include <fcntl.h>
+#include <signal.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -62,31 +65,18 @@
     400
 
 #define RICTUS_INTELLIGENCE_CHAIN_INDEX_PATH \
-    "C:\\stn-labz\\policies\\policy.index.json"
+    "state/intelligence/policy.index.json"
 
 #define RICTUS_INTELLIGENCE_CHAIN_OUTPUT_MAX \
     8192
 
-#define RICTUS_INTELLIGENCE_RAG_INPUT_DIRECTORY \
-    "C:\\stn-labz\\rag\\input"
 
-#define RICTUS_INTELLIGENCE_RAG_LINE_MAX \
-    512
-
-
-static HANDLE
-g_intelligence_thread =
-NULL;
-
-static HANDLE
-g_intelligence_stop_event =
-NULL;
-
-
-static volatile LONG
-g_intelligence_running =
-0;
-
+static pthread_t g_intelligence_thread;
+static int g_intelligence_thread_active;
+static pthread_mutex_t g_intelligence_stop_mutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t g_intelligence_stop_cond = PTHREAD_COND_INITIALIZER;
+static int g_intelligence_stop_requested;
+static int g_intelligence_running;
 
 static rictus_intelligence_seen_t
 g_intelligence_seen;
@@ -116,39 +106,51 @@ static rictus_intelligence_collection_metric_t g_collection_metrics[32];
 static size_t g_collection_metric_count;
 static const char *g_collection_evaluation_path="intelligence.collection.evaluations";
 #define RICTUS_THREAT_JSON_BASELINE_PATH \
-    "C:\\stn-labz\\rictus\\intelligence\\threat-json.initialized"
+    "state/intelligence/threat-json.initialized"
 
 static int threat_json_baseline_exists(void)
 {
-    DWORD attributes = GetFileAttributesA(RICTUS_THREAT_JSON_BASELINE_PATH);
-    return attributes != INVALID_FILE_ATTRIBUTES &&
-        (attributes & FILE_ATTRIBUTE_DIRECTORY) == 0;
+    struct stat st;
+    return stat(RICTUS_THREAT_JSON_BASELINE_PATH, &st) == 0 && S_ISREG(st.st_mode);
 }
 
 static int threat_json_baseline_store(void)
 {
-    HANDLE file = CreateFileA(RICTUS_THREAT_JSON_BASELINE_PATH,
-        GENERIC_WRITE, 0, NULL, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, NULL);
-    static const char marker[] = "v=1\tfeed=/threats\tmode=baseline-only\r\n";
-    DWORD written = 0;
-    if (file == INVALID_HANDLE_VALUE)
-        return GetLastError() == ERROR_FILE_EXISTS;
-    if (!WriteFile(file, marker, (DWORD)(sizeof(marker) - 1), &written, NULL) ||
-        written != sizeof(marker) - 1 || !FlushFileBuffers(file))
-    {
-        CloseHandle(file);
-        DeleteFileA(RICTUS_THREAT_JSON_BASELINE_PATH);
-        return 0;
+    static const char marker[] = "v=1\tfeed=/threats\tmode=baseline-only\n";
+    int fd = open(RICTUS_THREAT_JSON_BASELINE_PATH, O_WRONLY | O_CREAT | O_EXCL, 0640);
+    ssize_t written;
+    if (fd < 0) return errno == EEXIST;
+    written = write(fd, marker, sizeof(marker) - 1);
+    if (written != (ssize_t)(sizeof(marker) - 1) || fsync(fd) != 0) {
+        close(fd); unlink(RICTUS_THREAT_JSON_BASELINE_PATH); return 0;
     }
-    CloseHandle(file);
-    return 1;
+    return close(fd) == 0;
+}
+
+static int rictus_intelligence_copy(char *dst, size_t size, const char *src)
+{
+    int written;
+    if (!dst || size == 0 || !src) return 1;
+    written = snprintf(dst, size, "%s", src);
+    return written < 0 || (size_t)written >= size;
+}
+
+static int rictus_intelligence_append(char *dst, size_t size, const char *src)
+{
+    size_t used;
+    int written;
+    if (!dst || size == 0 || !src) return 1;
+    used = strlen(dst);
+    if (used >= size) return 1;
+    written = snprintf(dst + used, size - used, "%s", src);
+    return written < 0 || (size_t)written >= size - used;
 }
 
 static rictus_intelligence_collection_metric_t *collection_metric(const char *id)
 {
     size_t i; for(i=0;i<g_collection_metric_count;++i) if(strcmp(g_collection_metrics[i].id,id)==0)return &g_collection_metrics[i];
     if(g_collection_metric_count>=32)return NULL;
-    strcpy_s(g_collection_metrics[g_collection_metric_count].id,sizeof(g_collection_metrics[0].id),id);
+    snprintf(g_collection_metrics[g_collection_metric_count].id, sizeof(g_collection_metrics[0].id), "%s", id);
     return &g_collection_metrics[g_collection_metric_count++];
 }
 
@@ -156,7 +158,7 @@ static void collection_record(const char *id,int success,unsigned long http_stat
 {
     FILE *file=NULL; rictus_intelligence_collection_metric_t *m=collection_metric(id);
     if(m){++m->attempts;if(success)++m->successes;else ++m->failures;m->items+=(unsigned int)items;}
-    if(fopen_s(&file,g_collection_evaluation_path,"ab")==0&&file){fprintf(file,"v=1\tsource=%s\tresult=%s\thttp=%lu\titems=%u\n",id,success?"SUCCESS":"FAILURE",http_status,(unsigned int)items);fclose(file);}
+    file = fopen(g_collection_evaluation_path, "ab"); if(file){fprintf(file,"v=1\tsource=%s\tresult=%s\thttp=%lu\titems=%u\n",id,success?"SUCCESS":"FAILURE",http_status,(unsigned int)items);fclose(file);}
 }
 
 
@@ -476,13 +478,13 @@ rictus_intelligence_command_warn(const rictus_module_command_t *command,rictus_m
 {
     char response[700],exercise_id[32];const rictus_warning_record_t *record;const rictus_warning_exercise_t *exercise;size_t i;unsigned int pending=0,critical_unacked=0;(void)unused;
     if(!command||!reply)return RICTUS_MODULE_ERR_INVALID_ARGUMENT;
-    if(strcasecmp(command->arguments,"exercise status")==0){unsigned int exercise_pending=0,exercise_unacked=0;for(i=0;i<g_warning_exercise_store.count;++i){if(!g_warning_exercise_store.records[i].delivered)++exercise_pending;if(g_warning_exercise_store.records[i].severity==RICTUS_EXERCISE_CRITICAL&&!g_warning_exercise_store.records[i].acknowledged)++exercise_unacked;}sprintf_s(response,sizeof(response),"Warning exercises=%u | delivery pending=%u | CRITICAL unacknowledged=%u | production warnings unaffected",(unsigned)g_warning_exercise_store.count,exercise_pending,exercise_unacked);return reply(context,response)?RICTUS_MODULE_OK:RICTUS_MODULE_ERR_START_FAILED;}
-    if(strcasecmp(command->arguments,"exercise high")==0||strcasecmp(command->arguments,"exercise critical")==0){rictus_exercise_severity_t severity=strcasecmp(command->arguments,"exercise critical")==0?RICTUS_EXERCISE_CRITICAL:RICTUS_EXERCISE_HIGH;if(strcasecmp(command->sender,"STN_Boss")!=0&&strcasecmp(command->account,"STN_Boss")!=0)return reply(context,"Warning exercise refused: direct STN_Boss role authority required.")?RICTUS_MODULE_OK:RICTUS_MODULE_ERR_START_FAILED;if(!rictus_warning_exercise_create(&g_warning_exercise_store,severity,command->sender,exercise_id))return reply(context,"Warning exercise creation failed.")?RICTUS_MODULE_OK:RICTUS_MODULE_ERR_START_FAILED;rictus_warning_exercise_deliver(&g_warning_exercise_store,g_intelligence_host->send_message);sprintf_s(response,sizeof(response),"EXERCISE CREATED | %s | %s | isolated from production evidence and lifecycle state",exercise_id,severity==RICTUS_EXERCISE_CRITICAL?"CRITICAL":"HIGH");return reply(context,response)?RICTUS_MODULE_OK:RICTUS_MODULE_ERR_START_FAILED;}
-    if(strncasecmp(command->arguments,"exercise show ",14)==0){exercise=rictus_warning_exercise_find(&g_warning_exercise_store,command->arguments+14);if(!exercise)return reply(context,"Warning exercise not found.")?RICTUS_MODULE_OK:RICTUS_MODULE_ERR_START_FAILED;sprintf_s(response,sizeof(response),"%s | [EXERCISE] %s | delivered=%s | acknowledged=%s | created by=%s",exercise->id,exercise->severity==RICTUS_EXERCISE_CRITICAL?"CRITICAL":"HIGH",exercise->delivered?"YES":"NO",exercise->acknowledged?"YES":"NO",exercise->created_by);if(!reply(context,response))return RICTUS_MODULE_ERR_START_FAILED;return reply(context,"TEST FIXTURE ONLY | no INT, production WARN, remediation, or lifecycle authority created")?RICTUS_MODULE_OK:RICTUS_MODULE_ERR_START_FAILED;}
-    if(strncasecmp(command->arguments,"exercise ack ",13)==0){if(strcasecmp(command->sender,"STN_Boss")!=0&&strcasecmp(command->account,"STN_Boss")!=0)return reply(context,"Exercise acknowledgment refused: STN_Boss role required.")?RICTUS_MODULE_OK:RICTUS_MODULE_ERR_START_FAILED;if(!rictus_warning_exercise_ack(&g_warning_exercise_store,command->arguments+13,command->sender))return reply(context,"Warning exercise acknowledgment failed or exercise not found.")?RICTUS_MODULE_OK:RICTUS_MODULE_ERR_START_FAILED;sprintf_s(response,sizeof(response),"EXERCISE ACKNOWLEDGED | %s | receipt test only; no operational action authorized",command->arguments+13);return reply(context,response)?RICTUS_MODULE_OK:RICTUS_MODULE_ERR_START_FAILED;}
-    if(strcasecmp(command->arguments,"status")==0){for(i=0;i<g_warning_store.count;++i){if(!g_warning_store.records[i].delivered)++pending;if(g_warning_store.records[i].severity==RICTUS_INTELLIGENCE_SEVERITY_CRITICAL&&!g_warning_store.records[i].acknowledged)++critical_unacked;}sprintf_s(response,sizeof(response),"Warnings=%u | delivery pending=%u | CRITICAL unacknowledged=%u",(unsigned)g_warning_store.count,pending,critical_unacked);return reply(context,response)?RICTUS_MODULE_OK:RICTUS_MODULE_ERR_START_FAILED;}
-    if(strncasecmp(command->arguments,"show ",5)==0){record=rictus_warning_find(&g_warning_store,command->arguments+5);if(!record)return reply(context,"Warning not found.")?RICTUS_MODULE_OK:RICTUS_MODULE_ERR_START_FAILED;sprintf_s(response,sizeof(response),"%s | %s | confidence=%s | INT=%s | indicator=%s",record->id,rictus_intelligence_severity_string(record->severity),record->confidence==RICTUS_INTELLIGENCE_CONFIDENCE_HIGH?"HIGH":"MODERATE",record->int_id,record->indicator);if(!reply(context,response))return RICTUS_MODULE_ERR_START_FAILED;sprintf_s(response,sizeof(response),"Delivered=%s | acknowledged=%s | %s",record->delivered?"YES":"NO",record->acknowledged?"YES":"NO",record->reason);if(!reply(context,response))return RICTUS_MODULE_ERR_START_FAILED;return reply(context,"Acknowledgment records receipt only; no remediation or lifecycle action is authorized.")?RICTUS_MODULE_OK:RICTUS_MODULE_ERR_START_FAILED;}
-    if(strncasecmp(command->arguments,"ack ",4)==0){if(!rictus_warning_ack(&g_warning_store,command->arguments+4,command->sender))return reply(context,"Warning acknowledgment failed or warning not found.")?RICTUS_MODULE_OK:RICTUS_MODULE_ERR_START_FAILED;sprintf_s(response,sizeof(response),"ACKNOWLEDGED | %s | by %s | receipt only; no operational action authorized",command->arguments+4,command->sender);return reply(context,response)?RICTUS_MODULE_OK:RICTUS_MODULE_ERR_START_FAILED;}
+    if(strcasecmp(command->arguments,"exercise status")==0){unsigned int exercise_pending=0,exercise_unacked=0;for(i=0;i<g_warning_exercise_store.count;++i){if(!g_warning_exercise_store.records[i].delivered)++exercise_pending;if(g_warning_exercise_store.records[i].severity==RICTUS_EXERCISE_CRITICAL&&!g_warning_exercise_store.records[i].acknowledged)++exercise_unacked;}snprintf(response,sizeof(response),"Warning exercises=%u | delivery pending=%u | CRITICAL unacknowledged=%u | production warnings unaffected",(unsigned)g_warning_exercise_store.count,exercise_pending,exercise_unacked);return reply(context,response)?RICTUS_MODULE_OK:RICTUS_MODULE_ERR_START_FAILED;}
+    if(strcasecmp(command->arguments,"exercise high")==0||strcasecmp(command->arguments,"exercise critical")==0){rictus_exercise_severity_t severity=strcasecmp(command->arguments,"exercise critical")==0?RICTUS_EXERCISE_CRITICAL:RICTUS_EXERCISE_HIGH;if(strcasecmp(command->sender,"STN_Boss")!=0&&strcasecmp(command->account,"STN_Boss")!=0)return reply(context,"Warning exercise refused: direct STN_Boss role authority required.")?RICTUS_MODULE_OK:RICTUS_MODULE_ERR_START_FAILED;if(!rictus_warning_exercise_create(&g_warning_exercise_store,severity,command->sender,exercise_id))return reply(context,"Warning exercise creation failed.")?RICTUS_MODULE_OK:RICTUS_MODULE_ERR_START_FAILED;rictus_warning_exercise_deliver(&g_warning_exercise_store,g_intelligence_host->send_message);snprintf(response,sizeof(response),"EXERCISE CREATED | %s | %s | isolated from production evidence and lifecycle state",exercise_id,severity==RICTUS_EXERCISE_CRITICAL?"CRITICAL":"HIGH");return reply(context,response)?RICTUS_MODULE_OK:RICTUS_MODULE_ERR_START_FAILED;}
+    if(strncasecmp(command->arguments,"exercise show ",14)==0){exercise=rictus_warning_exercise_find(&g_warning_exercise_store,command->arguments+14);if(!exercise)return reply(context,"Warning exercise not found.")?RICTUS_MODULE_OK:RICTUS_MODULE_ERR_START_FAILED;snprintf(response,sizeof(response),"%s | [EXERCISE] %s | delivered=%s | acknowledged=%s | created by=%s",exercise->id,exercise->severity==RICTUS_EXERCISE_CRITICAL?"CRITICAL":"HIGH",exercise->delivered?"YES":"NO",exercise->acknowledged?"YES":"NO",exercise->created_by);if(!reply(context,response))return RICTUS_MODULE_ERR_START_FAILED;return reply(context,"TEST FIXTURE ONLY | no INT, production WARN, remediation, or lifecycle authority created")?RICTUS_MODULE_OK:RICTUS_MODULE_ERR_START_FAILED;}
+    if(strncasecmp(command->arguments,"exercise ack ",13)==0){if(strcasecmp(command->sender,"STN_Boss")!=0&&strcasecmp(command->account,"STN_Boss")!=0)return reply(context,"Exercise acknowledgment refused: STN_Boss role required.")?RICTUS_MODULE_OK:RICTUS_MODULE_ERR_START_FAILED;if(!rictus_warning_exercise_ack(&g_warning_exercise_store,command->arguments+13,command->sender))return reply(context,"Warning exercise acknowledgment failed or exercise not found.")?RICTUS_MODULE_OK:RICTUS_MODULE_ERR_START_FAILED;snprintf(response,sizeof(response),"EXERCISE ACKNOWLEDGED | %s | receipt test only; no operational action authorized",command->arguments+13);return reply(context,response)?RICTUS_MODULE_OK:RICTUS_MODULE_ERR_START_FAILED;}
+    if(strcasecmp(command->arguments,"status")==0){for(i=0;i<g_warning_store.count;++i){if(!g_warning_store.records[i].delivered)++pending;if(g_warning_store.records[i].severity==RICTUS_INTELLIGENCE_SEVERITY_CRITICAL&&!g_warning_store.records[i].acknowledged)++critical_unacked;}snprintf(response,sizeof(response),"Warnings=%u | delivery pending=%u | CRITICAL unacknowledged=%u",(unsigned)g_warning_store.count,pending,critical_unacked);return reply(context,response)?RICTUS_MODULE_OK:RICTUS_MODULE_ERR_START_FAILED;}
+    if(strncasecmp(command->arguments,"show ",5)==0){record=rictus_warning_find(&g_warning_store,command->arguments+5);if(!record)return reply(context,"Warning not found.")?RICTUS_MODULE_OK:RICTUS_MODULE_ERR_START_FAILED;snprintf(response,sizeof(response),"%s | %s | confidence=%s | INT=%s | indicator=%s",record->id,rictus_intelligence_severity_string(record->severity),record->confidence==RICTUS_INTELLIGENCE_CONFIDENCE_HIGH?"HIGH":"MODERATE",record->int_id,record->indicator);if(!reply(context,response))return RICTUS_MODULE_ERR_START_FAILED;snprintf(response,sizeof(response),"Delivered=%s | acknowledged=%s | %s",record->delivered?"YES":"NO",record->acknowledged?"YES":"NO",record->reason);if(!reply(context,response))return RICTUS_MODULE_ERR_START_FAILED;return reply(context,"Acknowledgment records receipt only; no remediation or lifecycle action is authorized.")?RICTUS_MODULE_OK:RICTUS_MODULE_ERR_START_FAILED;}
+    if(strncasecmp(command->arguments,"ack ",4)==0){if(!rictus_warning_ack(&g_warning_store,command->arguments+4,command->sender))return reply(context,"Warning acknowledgment failed or warning not found.")?RICTUS_MODULE_OK:RICTUS_MODULE_ERR_START_FAILED;snprintf(response,sizeof(response),"ACKNOWLEDGED | %s | by %s | receipt only; no operational action authorized",command->arguments+4,command->sender);return reply(context,response)?RICTUS_MODULE_OK:RICTUS_MODULE_ERR_START_FAILED;}
     return reply(context,"Usage: !warn status|show WARN-*|ack WARN-*|exercise status|high|critical|show EXWARN-*|ack EXWARN-*")?RICTUS_MODULE_OK:RICTUS_MODULE_ERR_START_FAILED;
 }
 
@@ -1224,7 +1226,7 @@ rictus_intelligence_chain_read_status(
             return 0;
         }
 
-        strcpy_s(
+        rictus_intelligence_copy(
             status,
             status_size,
             value
@@ -2964,13 +2966,13 @@ rictus_intelligence_develop_item(
     else
         why = relevance->reason;
 
-    strcpy_s(developed->why_stn_labz_cares,
+    rictus_intelligence_copy(developed->why_stn_labz_cares,
         sizeof(developed->why_stn_labz_cares), why);
     if (strcmp(source_item->source, "CERT/CC Vulnerability Notes") == 0)
-        strcpy_s(developed->root_source, sizeof(developed->root_source),
+        rictus_intelligence_copy(developed->root_source, sizeof(developed->root_source),
             "Not established by this record; CERT/CC is discovery/corroboration.");
     else
-        strcpy_s(developed->root_source, sizeof(developed->root_source),
+        rictus_intelligence_copy(developed->root_source, sizeof(developed->root_source),
             source_item->source);
 
     snprintf(developed->evidence, sizeof(developed->evidence),
@@ -2979,7 +2981,7 @@ rictus_intelligence_develop_item(
     snprintf(developed->assessment, sizeof(developed->assessment),
         "%s%s", relevance->reason,
         comparative ? " No evidence in this INT establishes that Chaos MVC contains the cited product vulnerability." : "");
-    strcpy_s(developed->unknowns, sizeof(developed->unknowns),
+    rictus_intelligence_copy(developed->unknowns, sizeof(developed->unknowns),
         "Affected-version applicability, exposure in the STN-LABZ environment, exploitability, and required mitigation are not established unless explicitly stated in the retained source evidence.");
     if (threat_sensor)
     {
@@ -2990,7 +2992,7 @@ rictus_intelligence_develop_item(
                 "%s No successful access, ChAoS MVC applicability, or compromise is established unless explicitly present in the retained sensor evidence.",
                 sensor_warning.reason);
         }
-        strcpy_s(developed->unknowns, sizeof(developed->unknowns),
+        rictus_intelligence_copy(developed->unknowns, sizeof(developed->unknowns),
             "Request outcome, repetition across distinct sites or sensors, and any effect beyond the reported pattern match are not supplied by this event.");
     }
     snprintf(developed->provenance, sizeof(developed->provenance),
@@ -3000,7 +3002,7 @@ rictus_intelligence_develop_item(
 
     if (rictus_intelligence_contains_ci(source_item->title, "CVE-") ||
         rictus_intelligence_contains_ci(source_item->summary, "CVE-"))
-        strcat_s(developed->assessment, sizeof(developed->assessment),
+        rictus_intelligence_append(developed->assessment, sizeof(developed->assessment),
             " A CVE identifier is present in the retained evidence and should be correlated with the originating advisory.");
 }
 
@@ -3089,7 +3091,7 @@ static int rictus_intelligence_notification_load(void)
             if (line[0] != '\0' &&
                 !rictus_intelligence_id_list_contains(g_intelligence_notified,
                     g_intelligence_notified_count, line))
-                strcpy_s(g_intelligence_notified[g_intelligence_notified_count++],
+                rictus_intelligence_copy(g_intelligence_notified[g_intelligence_notified_count++],
                     RICTUS_INTELLIGENCE_RECORD_ID_MAX, line);
         }
         fclose(file);
@@ -3101,7 +3103,7 @@ static int rictus_intelligence_notification_load(void)
             !rictus_intelligence_id_list_contains(g_intelligence_notified,
                 g_intelligence_notified_count, record->id) &&
             g_intelligence_pending_count < RICTUS_INTELLIGENCE_NOTIFICATION_MAX)
-            strcpy_s(g_intelligence_pending[g_intelligence_pending_count++],
+            rictus_intelligence_copy(g_intelligence_pending[g_intelligence_pending_count++],
                 RICTUS_INTELLIGENCE_RECORD_ID_MAX, record->id);
     }
     return 1;
@@ -3116,7 +3118,7 @@ static int rictus_intelligence_notification_queue(const char *id)
         rictus_intelligence_id_list_contains(g_intelligence_pending,
             g_intelligence_pending_count, id)) return 1;
     if (g_intelligence_pending_count >= RICTUS_INTELLIGENCE_NOTIFICATION_MAX) return 0;
-    strcpy_s(g_intelligence_pending[g_intelligence_pending_count++],
+    rictus_intelligence_copy(g_intelligence_pending[g_intelligence_pending_count++],
         RICTUS_INTELLIGENCE_RECORD_ID_MAX, id);
     return 1;
 }
@@ -3130,7 +3132,7 @@ static int rictus_intelligence_notification_mark(const char *id)
     if (fprintf(file, "%s\n", id) < 0 || fflush(file) != 0)
     { fclose(file); return 0; }
     fclose(file);
-    strcpy_s(g_intelligence_notified[g_intelligence_notified_count++],
+    rictus_intelligence_copy(g_intelligence_notified[g_intelligence_notified_count++],
         RICTUS_INTELLIGENCE_RECORD_ID_MAX, id);
     return 1;
 }
@@ -4546,13 +4548,13 @@ rictus_intelligence_qualify(
     {
         return RICTUS_MODULE_ERR_QUALIFICATION;
     }
-    strcpy_s(comparative_item.source, sizeof(comparative_item.source),
+    rictus_intelligence_copy(comparative_item.source, sizeof(comparative_item.source),
         "Drupal Core Security Advisories");
-    strcpy_s(comparative_item.title, sizeof(comparative_item.title),
+    rictus_intelligence_copy(comparative_item.title, sizeof(comparative_item.title),
         "Drupal core security advisory - access control vulnerability");
-    strcpy_s(comparative_item.summary, sizeof(comparative_item.summary),
+    rictus_intelligence_copy(comparative_item.summary, sizeof(comparative_item.summary),
         "A security vulnerability affects authenticated file upload authorization.");
-    strcpy_s(comparative_item.url, sizeof(comparative_item.url),
+    rictus_intelligence_copy(comparative_item.url, sizeof(comparative_item.url),
         "https://www.drupal.org/security/example");
 
 
@@ -4698,11 +4700,11 @@ rictus_intelligence_qualify(
     {
         rictus_intelligence_relevance_result_t irrelevant_result;
         memset(&policy_item, 0, sizeof(policy_item));
-        strcpy_s(policy_item.source, sizeof(policy_item.source),
+        rictus_intelligence_copy(policy_item.source, sizeof(policy_item.source),
             "CISA Cybersecurity Advisories");
-        strcpy_s(policy_item.title, sizeof(policy_item.title),
+        rictus_intelligence_copy(policy_item.title, sizeof(policy_item.title),
             irrelevant_cisa_titles[irrelevant_index]);
-        strcpy_s(policy_item.summary, sizeof(policy_item.summary),
+        rictus_intelligence_copy(policy_item.summary, sizeof(policy_item.summary),
             "A security vulnerability has been reported and requires a software update.");
         RICTUS_TEST(rictus_intelligence_relevance_evaluate(
             &policy_item, &irrelevant_result) &&
@@ -4710,11 +4712,11 @@ rictus_intelligence_qualify(
     }
 
     memset(&policy_item, 0, sizeof(policy_item));
-    strcpy_s(policy_item.source, sizeof(policy_item.source),
+    rictus_intelligence_copy(policy_item.source, sizeof(policy_item.source),
         "CISA Cybersecurity Advisories");
-    strcpy_s(policy_item.title, sizeof(policy_item.title),
+    rictus_intelligence_copy(policy_item.title, sizeof(policy_item.title),
         "PHP runtime vulnerability added to the CISA catalog");
-    strcpy_s(policy_item.summary, sizeof(policy_item.summary),
+    rictus_intelligence_copy(policy_item.summary, sizeof(policy_item.summary),
         "The vulnerability affects PHP runtime request processing.");
     RICTUS_TEST(rictus_intelligence_relevance_evaluate(
         &policy_item, &comparative_relevance) &&
@@ -4744,18 +4746,18 @@ rictus_intelligence_qualify(
         strlen(notification) < RICTUS_INTELLIGENCE_IRC_MESSAGE_MAX
     );
 
-    strcpy_s(policy_item.source,sizeof(policy_item.source),"STN-LABZ Threat API");
-    strcpy_s(policy_item.summary,sizeof(policy_item.summary),"Sentinel blocked WordPress /wp-login.php probe");
+    rictus_intelligence_copy(policy_item.source,sizeof(policy_item.source),"STN-LABZ Threat API");
+    rictus_intelligence_copy(policy_item.summary,sizeof(policy_item.summary),"Sentinel blocked WordPress /wp-login.php probe");
     RICTUS_TEST(rictus_intelligence_warning_evaluate(&policy_item,&warning)&&warning.severity==RICTUS_INTELLIGENCE_SEVERITY_LOW&&!warning.automatic_reporting_authorized&&!warning.lifecycle_escalation_authorized);
-    strcpy_s(policy_item.content,sizeof(policy_item.content),"GET /APP/CORE/MAILER.PHP?probe=1 blocked");
+    rictus_intelligence_copy(policy_item.content,sizeof(policy_item.content),"GET /APP/CORE/MAILER.PHP?probe=1 blocked");
     RICTUS_TEST(rictus_intelligence_warning_evaluate(&policy_item,&warning)&&warning.severity==RICTUS_INTELLIGENCE_SEVERITY_HIGH&&warning.protected_boundary_hit&&warning.handling==RICTUS_INTELLIGENCE_HANDLING_OPERATOR_PM&&warning.automatic_reporting_authorized&&!warning.lifecycle_escalation_authorized&&strcmp(warning.indicator_id,"CHAOS-CORE-MAILER")==0);
-    memset(&policy_item,0,sizeof(policy_item));strcpy_s(policy_item.source,sizeof(policy_item.source),"STN-LABZ Threat API");strcpy_s(policy_item.evidence,sizeof(policy_item.evidence),"path=/app/core/config.php result=blocked");
+    memset(&policy_item,0,sizeof(policy_item));rictus_intelligence_copy(policy_item.source,sizeof(policy_item.source),"STN-LABZ Threat API");rictus_intelligence_copy(policy_item.evidence,sizeof(policy_item.evidence),"path=/app/core/config.php result=blocked");
     RICTUS_TEST(rictus_intelligence_warning_evaluate(&policy_item,&warning)&&warning.severity==RICTUS_INTELLIGENCE_SEVERITY_HIGH&&strcmp(warning.indicator_id,"CHAOS-CORE-CONFIG")==0&&!warning.lifecycle_escalation_authorized);
     RICTUS_TEST(rictus_intelligence_protected_boundary_count()==2U&&rictus_intelligence_protected_boundary_get(2)==NULL);
     RICTUS_TEST(rictus_intelligence_source_evaluate(&policy_item,&source_evaluation)&&source_evaluation.role==RICTUS_INTELLIGENCE_SOURCE_ROLE_SENSOR&&source_evaluation.independence==RICTUS_INTELLIGENCE_INDEPENDENCE_SAME_SENSOR_NETWORK&&source_evaluation.independent_source_count==0U);
     RICTUS_TEST(rictus_intelligence_requirement_count()==5U&&rictus_intelligence_requirement_get(0)->priority==1U&&rictus_intelligence_requirement_get(4)->human_authority_required);
     RICTUS_TEST(rictus_intelligence_information_requirement_get(0)->gap_open==0&&rictus_intelligence_information_requirement_get(1)->gap_open==1&&rictus_intelligence_information_requirement_get(5)==NULL);
-    {rictus_warning_exercise_store_t exercise_store;memset(&exercise_store,0,sizeof(exercise_store));strcpy_s(exercise_store.records[0].id,sizeof(exercise_store.records[0].id),"EXWARN-12345678");exercise_store.records[0].severity=RICTUS_EXERCISE_CRITICAL;exercise_store.count=1;RICTUS_TEST(rictus_warning_exercise_find(&exercise_store,"EXWARN-12345678")!=NULL&&rictus_warning_exercise_find(&exercise_store,"EXWARN-00000000")==NULL&&exercise_store.records[0].severity==RICTUS_EXERCISE_CRITICAL);}
+    {rictus_warning_exercise_store_t exercise_store;memset(&exercise_store,0,sizeof(exercise_store));rictus_intelligence_copy(exercise_store.records[0].id,sizeof(exercise_store.records[0].id),"EXWARN-12345678");exercise_store.records[0].severity=RICTUS_EXERCISE_CRITICAL;exercise_store.count=1;RICTUS_TEST(rictus_warning_exercise_find(&exercise_store,"EXWARN-12345678")!=NULL&&rictus_warning_exercise_find(&exercise_store,"EXWARN-00000000")==NULL&&exercise_store.records[0].severity==RICTUS_EXERCISE_CRITICAL);}
 
 
     RICTUS_TEST(
@@ -4877,7 +4879,6 @@ rictus_intelligence_descriptor =
  * ------------------------------------------------
  */
 
-RICTUS_EXPORT
 const rictus_module_descriptor_t*
 stnlabz_module_get_descriptor(void)
 {
