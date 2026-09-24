@@ -19,12 +19,13 @@
  * or publish knowledge to Digit.
  */
 
-#ifdef _WIN32
-#define WIN32_LEAN_AND_MEAN
-#include <windows.h>
-#else
-#include "win_compat_posix.h"
-#endif
+#include <errno.h>
+#include <pthread.h>
+#include <strings.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <time.h>
+#include <unistd.h>
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -405,7 +406,7 @@ rictus_intelligence_srt_store_find(
         )
     {
         if (
-            _stricmp(
+            strcasecmp(
                 store
                     ->requests[index]
                     .intelligence_id,
@@ -927,7 +928,7 @@ rictus_intelligence_srt_allocate_id(
 
         if (
             existing[0] == '\0' ||
-            _strnicmp(
+            strncasecmp(
                 existing,
                 prefix,
                 strlen(prefix)
@@ -1249,7 +1250,7 @@ rictus_intelligence_srt_approve(
 
     if (
         request == NULL ||
-        _stricmp(request->status, "REQUESTED") != 0 ||
+        strcasecmp(request->status, "REQUESTED") != 0 ||
         request->srt_id[0] != '\0'
         )
     {
@@ -1469,7 +1470,7 @@ rictus_intelligence_srt_reject(
         rictus_intelligence_srt_store_find(store, intelligence_id);
 
     if (request == NULL ||
-        _stricmp(request->status, "REQUESTED") != 0 ||
+        strcasecmp(request->status, "REQUESTED") != 0 ||
         request->srt_id[0] != '\0')
     {
         return 0;
