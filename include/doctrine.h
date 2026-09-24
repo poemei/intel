@@ -1,0 +1,28 @@
+#ifndef RICTUS_INTELLIGENCE_DOCTRINE_H
+#define RICTUS_INTELLIGENCE_DOCTRINE_H
+#include <stddef.h>
+#include "item.h"
+#define RICTUS_INTELLIGENCE_DOCTRINE_SCHEMA_VERSION 1U
+#define RICTUS_INTELLIGENCE_REQUIREMENT_TEXT_MAX 512
+#define RICTUS_INTELLIGENCE_BOUNDARY_VALUE_MAX 256
+#define RICTUS_INTELLIGENCE_WARNING_REASON_MAX 512
+typedef enum { RICTUS_INTELLIGENCE_SEVERITY_INFORMATIONAL=0, RICTUS_INTELLIGENCE_SEVERITY_LOW, RICTUS_INTELLIGENCE_SEVERITY_HIGH, RICTUS_INTELLIGENCE_SEVERITY_CRITICAL } rictus_intelligence_severity_t;
+typedef enum { RICTUS_INTELLIGENCE_LIKELIHOOD_NOT_ASSESSED=0, RICTUS_INTELLIGENCE_LIKELIHOOD_UNLIKELY, RICTUS_INTELLIGENCE_LIKELIHOOD_ROUGHLY_EVEN, RICTUS_INTELLIGENCE_LIKELIHOOD_LIKELY, RICTUS_INTELLIGENCE_LIKELIHOOD_VERY_LIKELY } rictus_intelligence_likelihood_t;
+typedef enum { RICTUS_INTELLIGENCE_CONFIDENCE_NOT_ASSESSED=0, RICTUS_INTELLIGENCE_CONFIDENCE_LOW, RICTUS_INTELLIGENCE_CONFIDENCE_MODERATE, RICTUS_INTELLIGENCE_CONFIDENCE_HIGH } rictus_intelligence_confidence_t;
+typedef enum { RICTUS_INTELLIGENCE_SOURCE_ROLE_UNKNOWN=0, RICTUS_INTELLIGENCE_SOURCE_ROLE_SENSOR, RICTUS_INTELLIGENCE_SOURCE_ROLE_DISCOVERY, RICTUS_INTELLIGENCE_SOURCE_ROLE_AUTHORITATIVE_ROOT, RICTUS_INTELLIGENCE_SOURCE_ROLE_INDEPENDENT_EXTERNAL } rictus_intelligence_source_role_t;
+typedef enum { RICTUS_INTELLIGENCE_INDEPENDENCE_UNKNOWN=0, RICTUS_INTELLIGENCE_INDEPENDENCE_SAME_SENSOR_NETWORK, RICTUS_INTELLIGENCE_INDEPENDENCE_SYNDICATED, RICTUS_INTELLIGENCE_INDEPENDENCE_INDEPENDENT } rictus_intelligence_independence_t;
+typedef enum { RICTUS_INTELLIGENCE_HANDLING_RETAIN=0, RICTUS_INTELLIGENCE_HANDLING_OPERATOR_NOTICE, RICTUS_INTELLIGENCE_HANDLING_OPERATOR_PM, RICTUS_INTELLIGENCE_HANDLING_CHANNEL_AND_ACK } rictus_intelligence_handling_t;
+typedef struct { unsigned int schema_version; char id[32]; unsigned int priority; char decision[RICTUS_INTELLIGENCE_REQUIREMENT_TEXT_MAX]; char protected_boundary[RICTUS_INTELLIGENCE_BOUNDARY_VALUE_MAX]; char satisfaction_criteria[RICTUS_INTELLIGENCE_REQUIREMENT_TEXT_MAX]; char deadline[RICTUS_INTELLIGENCE_ITEM_DATE_MAX]; int human_authority_required; } rictus_intelligence_requirement_t;
+typedef struct { unsigned int schema_version; char id[32]; char requirement_id[32]; char question[RICTUS_INTELLIGENCE_REQUIREMENT_TEXT_MAX]; char expected_source_role[64]; int gap_open; } rictus_intelligence_information_requirement_t;
+typedef struct { unsigned int schema_version; char id[64]; char normalized_value[RICTUS_INTELLIGENCE_BOUNDARY_VALUE_MAX]; rictus_intelligence_severity_t severity; rictus_intelligence_handling_t handling; int protected_boundary; } rictus_intelligence_indicator_t;
+typedef struct { unsigned int schema_version; rictus_intelligence_source_role_t role; rictus_intelligence_independence_t independence; unsigned int sensor_count; unsigned int independent_source_count; } rictus_intelligence_source_evaluation_t;
+typedef struct { unsigned int schema_version; rictus_intelligence_severity_t severity; rictus_intelligence_likelihood_t likelihood; rictus_intelligence_confidence_t confidence; rictus_intelligence_handling_t handling; int protected_boundary_hit; int automatic_reporting_authorized; int lifecycle_escalation_authorized; char indicator_id[64]; char reason[RICTUS_INTELLIGENCE_WARNING_REASON_MAX]; } rictus_intelligence_warning_t;
+size_t rictus_intelligence_protected_boundary_count(void);
+const rictus_intelligence_indicator_t *rictus_intelligence_protected_boundary_get(size_t index);
+size_t rictus_intelligence_requirement_count(void);
+const rictus_intelligence_requirement_t *rictus_intelligence_requirement_get(size_t index);
+const rictus_intelligence_information_requirement_t *rictus_intelligence_information_requirement_get(size_t index);
+int rictus_intelligence_source_evaluate(const rictus_intelligence_item_t *,rictus_intelligence_source_evaluation_t *);
+int rictus_intelligence_warning_evaluate(const rictus_intelligence_item_t *,rictus_intelligence_warning_t *);
+const char *rictus_intelligence_severity_string(rictus_intelligence_severity_t);
+#endif
