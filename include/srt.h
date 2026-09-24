@@ -16,10 +16,10 @@
     1024
 
 #define RICTUS_INTELLIGENCE_SRT_DIRECTORY \
-    "C:\\stn-labz\\reports\\SRT"
+    "state/intelligence/srt"
 
 #define RICTUS_INTELLIGENCE_SRT_REQUEST_PATH \
-    "C:\\stn-labz\\reports\\SRT\\srt.requests"
+    "state/intelligence/srt/srt.requests"
 
 #define RICTUS_INTELLIGENCE_SRT_ID_MAX \
     32
@@ -28,7 +28,7 @@
     128
 	
 #define RICTUS_INTELLIGENCE_RAG_INPUT_DIRECTORY \
-    "C:\\stn-labz\\rag\\input"
+    "state/intelligence/rag/input"
 
 #define RICTUS_INTELLIGENCE_RAG_LINE_MAX \
     512
