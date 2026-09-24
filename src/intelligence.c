@@ -2419,17 +2419,19 @@ rictus_intelligence_develop_item(
     rictus_intelligence_item_t *developed
 )
 {
-    SYSTEMTIME now;
+    time_t now;
+    struct tm utc;
     const char *why;
     int comparative;
     int threat_sensor;
     rictus_intelligence_warning_t sensor_warning;
 
     *developed = *source_item;
-    GetSystemTime(&now);
-    snprintf(developed->observed, sizeof(developed->observed),
-        "%04u-%02u-%02uT%02u:%02u:%02uZ", now.wYear, now.wMonth,
-        now.wDay, now.wHour, now.wMinute, now.wSecond);
+    now = time(NULL);
+    if (now != (time_t)-1 && gmtime_r(&now, &utc) != NULL)
+        strftime(developed->observed, sizeof(developed->observed), "%Y-%m-%dT%H:%M:%SZ", &utc);
+    else
+        developed->observed[0] = '\0';
 
     comparative =
         strcmp(source_item->source, "WordPress Security Releases") == 0 ||
@@ -2615,7 +2617,7 @@ static int rictus_intelligence_notification_mark(const char *id)
 {
     FILE *file = NULL;
     if (g_intelligence_notified_count >= RICTUS_INTELLIGENCE_NOTIFICATION_MAX) return 0;
-    if (fopen_s(&file, g_intelligence_notified_path, "a") != 0 || file == NULL) return 0;
+    file = fopen(g_intelligence_notified_path, "a"); if (file == NULL) return 0;
     if (fprintf(file, "%s\n", id) < 0 || fflush(file) != 0)
     { fclose(file); return 0; }
     fclose(file);
@@ -2633,7 +2635,7 @@ static void rictus_intelligence_notification_drain(void)
         const rictus_intelligence_record_t *record =
             rictus_intelligence_record_store_find(&g_intelligence_records, id);
         char message[RICTUS_INTELLIGENCE_IRC_MESSAGE_MAX];
-        if (WaitForSingleObject(g_intelligence_stop_event, 0) == WAIT_OBJECT_0) return;
+        if (rictus_intelligence_stop_wait(0)) return;
         if (record == NULL ||
             !rictus_intelligence_format_notification(message, sizeof(message), id, &record->item) ||
             !g_intelligence_host->send_message(message) ||
@@ -2649,8 +2651,7 @@ static void rictus_intelligence_notification_drain(void)
             memmove(g_intelligence_pending, g_intelligence_pending + 1,
                 g_intelligence_pending_count * sizeof(g_intelligence_pending[0]));
         if (g_intelligence_pending_count > 0 &&
-            WaitForSingleObject(g_intelligence_stop_event,
-                RICTUS_INTELLIGENCE_NOTIFICATION_INTERVAL_MS) == WAIT_OBJECT_0) return;
+            rictus_intelligence_stop_wait(RICTUS_INTELLIGENCE_NOTIFICATION_INTERVAL_MS)) return;
     }
 }
 
@@ -2901,10 +2902,7 @@ rictus_intelligence_collect_cycle(void)
 
 
         if (
-            WaitForSingleObject(
-                g_intelligence_stop_event,
-                0
-            ) == WAIT_OBJECT_0
+            rictus_intelligence_stop_wait(0)
             )
         {
             free(
@@ -3080,10 +3078,7 @@ rictus_intelligence_collect_cycle(void)
             )
         {
             if (
-                WaitForSingleObject(
-                    g_intelligence_stop_event,
-                    0
-                ) == WAIT_OBJECT_0
+                rictus_intelligence_stop_wait(0)
                 )
             {
                 free(
@@ -3116,10 +3111,7 @@ rictus_intelligence_collect_cycle(void)
                 if (
                     notifications_sent <
                         RICTUS_INTELLIGENCE_NOTIFICATIONS_PER_CYCLE &&
-                    WaitForSingleObject(
-                        g_intelligence_stop_event,
-                        RICTUS_INTELLIGENCE_NOTIFICATION_INTERVAL_MS
-                    ) == WAIT_OBJECT_0
+                    rictus_intelligence_stop_wait(RICTUS_INTELLIGENCE_NOTIFICATION_INTERVAL_MS)
                 )
                 {
                     free(items);
@@ -3151,78 +3143,23 @@ rictus_intelligence_collect_cycle(void)
  * ------------------------------------------------
  */
 
-static DWORD WINAPI
-rictus_intelligence_worker(
-    LPVOID parameter
-)
+static void *
+rictus_intelligence_worker(void *parameter)
 {
-    DWORD wait_result;
-
-
     (void)parameter;
+    printf("[INTELLIGENCE] Worker started.\n");
 
-
-    printf(
-        "[INTELLIGENCE] Worker started.\n"
-    );
-
-
-    for (;;)
-    {
-        if (
-            WaitForSingleObject(
-                g_intelligence_stop_event,
-                0
-            ) == WAIT_OBJECT_0
-            )
-        {
-            break;
-        }
-
-
+    while (!rictus_intelligence_stop_wait(0)) {
         rictus_intelligence_collect_cycle();
-
-
-        wait_result =
-            WaitForSingleObject(
-                g_intelligence_stop_event,
-                RICTUS_INTELLIGENCE_COLLECTION_INTERVAL_MS
-            );
-
-
-        if (
-            wait_result ==
-            WAIT_OBJECT_0
-            )
-        {
-            break;
-        }
-
-
-        if (
-            wait_result !=
-            WAIT_TIMEOUT
-            )
-        {
-            break;
-        }
+        if (rictus_intelligence_stop_wait(RICTUS_INTELLIGENCE_COLLECTION_INTERVAL_MS)) break;
     }
 
-
-    printf(
-        "[INTELLIGENCE] Worker stopped.\n"
-    );
-
-
-    InterlockedExchange(
-        &g_intelligence_running,
-        0
-    );
-
-
-    return 0;
+    printf("[INTELLIGENCE] Worker stopped.\n");
+    pthread_mutex_lock(&g_intelligence_stop_mutex);
+    g_intelligence_running = 0;
+    pthread_mutex_unlock(&g_intelligence_stop_mutex);
+    return NULL;
 }
-
 
 /*
  * ------------------------------------------------
