@@ -7,6 +7,9 @@ LDLIBS := -lcurl -lssl -lcrypto -pthread
 
 BUILD_DIR := build/linux
 TARGET := $(BUILD_DIR)/intelligence.so
+PREFIX ?= /usr/local
+MODULEDIR ?= $(PREFIX)/lib/rictus/modules/intelligence
+DESTDIR ?=
 
 SOURCES := \
 	src/intelligence.c \
@@ -21,13 +24,20 @@ SOURCES := \
 	src/warning.c \
 	src/warning_exercise.c
 
-.PHONY: all clean
+HEADERS := $(wildcard include/*.h)
+
+.PHONY: all clean install
 
 all: $(TARGET)
 
-$(TARGET): $(SOURCES)
+$(TARGET): $(SOURCES) $(HEADERS)
 	@mkdir -p $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) $(SOURCES) $(LDLIBS) -o $@
+
+install: all
+	install -d "$(DESTDIR)$(MODULEDIR)"
+	install -m 0755 "$(TARGET)" "$(DESTDIR)$(MODULEDIR)/intelligence.so"
+	install -m 0644 module.conf "$(DESTDIR)$(MODULEDIR)/module.conf"
 
 clean:
 	rm -rf $(BUILD_DIR)
