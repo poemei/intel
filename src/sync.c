@@ -15,3 +15,39 @@ void rictus_intelligence_sync_init(rictus_intelligence_sync_t *s,const char *end
 static int send_record(rictus_intelligence_sync_t *s,const rictus_intelligence_record_t *r){char url[768],json[SYNC_JSON_MAX];if(snprintf(url,sizeof(url),"%s/intelligence/report",s->endpoint)>=(int)sizeof(url)||!build_json(r,json,sizeof(json)))return 0;return post_json(url,json);}
 int rictus_intelligence_sync_report(rictus_intelligence_sync_t *s,const rictus_intelligence_record_t *r){if(!s||!r||!s->endpoint[0]||!s->pending_path[0])return 0;if(send_record(s,r))return 1;return queue_add(s->pending_path,r->id);}
 int rictus_intelligence_sync_retry(rictus_intelligence_sync_t *s,const rictus_intelligence_record_store_t *store){FILE *in,*out;char temp[300],id[128];int ok=1;if(!s||!store||!s->pending_path[0])return 0;in=fopen(s->pending_path,"r");if(!in)return 1;if(snprintf(temp,sizeof(temp),"%s.tmp",s->pending_path)>=(int)sizeof(temp)){fclose(in);return 0;}out=fopen(temp,"w");if(!out){fclose(in);return 0;}while(fgets(id,sizeof(id),in)){const rictus_intelligence_record_t *r;id[strcspn(id,"\r\n")]='\0';if(!id[0])continue;r=rictus_intelligence_record_store_find(store,id);if(!r||!send_record(s,r)){if(fprintf(out,"%s\n",id)<0)ok=0;}}if(fflush(out)!=0)ok=0;fclose(in);if(fclose(out)!=0)ok=0;if(ok&&rename(temp,s->pending_path)!=0)ok=0;if(!ok)remove(temp);return ok;}
+
+
+int rictus_intelligence_sync_all(rictus_intelligence_sync_t *s,const rictus_intelligence_record_store_t *store,size_t *sent,size_t *failed)
+{
+    size_t i;
+    size_t sent_count=0;
+    size_t failed_count=0;
+
+    if(sent)*sent=0;
+    if(failed)*failed=0;
+    if(!s||!store||!s->endpoint[0]||!s->pending_path[0])return 0;
+
+    for(i=0;i<store->count;i++)
+    {
+        const rictus_intelligence_record_t *r=&store->records[i];
+
+        if(send_record(s,r))
+        {
+            sent_count++;
+        }
+        else
+        {
+            failed_count++;
+            if(!queue_add(s->pending_path,r->id))
+            {
+                if(sent)*sent=sent_count;
+                if(failed)*failed=failed_count;
+                return 0;
+            }
+        }
+    }
+
+    if(sent)*sent=sent_count;
+    if(failed)*failed=failed_count;
+    return failed_count==0;
+}
