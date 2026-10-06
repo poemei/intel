@@ -103,7 +103,7 @@ static int json_string_after(const char *start,const char *key,char *out,size_t 
 {
     char needle[96];const char *p;size_t o=0;
     if(!start||!key||!out||cap<2)return 0;
-    if(snprintf(needle,sizeof(needle),"\\\"%s\\\"",key)>=(int)sizeof(needle))return 0;
+    if(snprintf(needle,sizeof(needle),"\"%s\"",key)>=(int)sizeof(needle))return 0;
     p=strstr(start,needle);if(!p)return 0;p+=strlen(needle);
     while(*p&&(*p==' '||*p=='\t'||*p=='\r'||*p=='\n'))++p;
     if(*p++!=':')return 0;while(*p&&(*p==' '||*p=='\t'||*p=='\r'||*p=='\n'))++p;
@@ -128,7 +128,7 @@ static int assignment_status(rictus_intelligence_sync_t *s,const char *id,const 
     char url[768],json[512],eid[192],estatus[64];
     if(!s||!id||!status||!escape_json(id,eid,sizeof(eid))||!escape_json(status,estatus,sizeof(estatus)))return 0;
     if(snprintf(url,sizeof(url),"%s/intelligence/assignment",s->endpoint)>=(int)sizeof(url))return 0;
-    if(snprintf(json,sizeof(json),"{\\\"assignment_id\\\":\\\"%s\\\",\\\"status\\\":\\\"%s\\\"}",eid,estatus)>=(int)sizeof(json))return 0;
+    if(snprintf(json,sizeof(json),"{\"assignment_id\":\"%s\",\"status\":\"%s\"}",eid,estatus)>=(int)sizeof(json))return 0;
     return post_json(url,json);
 }
 
@@ -139,7 +139,7 @@ int rictus_intelligence_sync_assignments(rictus_intelligence_sync_t *s,const cha
     if(snprintf(url,sizeof(url),"%s/intelligence/assignments?status=PENDING",s->endpoint)>=(int)sizeof(url))return 0;
     if(!get_url(url,&response))return 0;
     p=response.body;
-    while((p=strstr(p,"\\\"assignment_id\\\""))!=NULL){
+    while((p=strstr(p,"\"assignment_id\""))!=NULL){
         char id[128],intel[128],type[64];const char *n=NULL;FILE *out;
         if(!json_string_after(p,"assignment_id",id,sizeof(id),&n))break;
         if(!json_string_after(n,"intelligence_id",intel,sizeof(intel),&n)){p+=15;continue;}
