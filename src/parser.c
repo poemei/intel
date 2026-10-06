@@ -1870,7 +1870,8 @@ rictus_intelligence_parse_nist_csrc(
          * The next meaningful line is the title.
          */
 
-        snprintf(title, sizeof(title), "%s", line);
+        snprintf(title, sizeof(title), "%.*s",
+            (int)sizeof(title) - 1, line);
 
 
         if (
@@ -2005,15 +2006,25 @@ rictus_intelligence_parse_nist_csrc(
             }
 
 
-            written =
-                snprintf(
-                    item->content,
-                    sizeof(item->content),
-                    "%s\n%s\n%s",
-                    item->title,
-                    item->published,
-                    item->summary
-                );
+            {
+                char title_copy[sizeof(item->title)];
+                char published_copy[sizeof(item->published)];
+                char summary_copy[sizeof(item->summary)];
+
+                snprintf(title_copy, sizeof(title_copy), "%s", item->title);
+                snprintf(published_copy, sizeof(published_copy), "%s", item->published);
+                snprintf(summary_copy, sizeof(summary_copy), "%s", item->summary);
+
+                written =
+                    snprintf(
+                        item->content,
+                        sizeof(item->content),
+                        "%s\n%s\n%s",
+                        title_copy,
+                        published_copy,
+                        summary_copy
+                    );
+            }
 
 
             if (
