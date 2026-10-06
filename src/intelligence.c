@@ -426,12 +426,25 @@ rictus_intelligence_command_synch(
             &sent,
             &failed))
     {
+        long http_status = 0;
+        int curl_code = 0;
+        char remote_body[96];
+
+        rictus_intelligence_sync_last_error(
+            &http_status,
+            &curl_code,
+            remote_body,
+            sizeof(remote_body));
+
         (void)snprintf(
             response,
             sizeof(response),
-            "SYNCH INCOMPLETE | sent=%zu failed=%zu | stn-labz.com",
+            "SYNCH INCOMPLETE | sent=%zu failed=%zu | HTTP=%ld CURL=%d | %.80s",
             sent,
-            failed);
+            failed,
+            http_status,
+            curl_code,
+            remote_body[0] ? remote_body : "no response body");
         return reply(reply_context, response)
             ? RICTUS_MODULE_OK : RICTUS_MODULE_ERR_START_FAILED;
     }
