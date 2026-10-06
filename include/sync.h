@@ -7,4 +7,5 @@ void rictus_intelligence_sync_init(rictus_intelligence_sync_t *sync,const char *
 int rictus_intelligence_sync_report(rictus_intelligence_sync_t *sync,const rictus_intelligence_record_t *record);
 int rictus_intelligence_sync_retry(rictus_intelligence_sync_t *sync,const rictus_intelligence_record_store_t *store);
 int rictus_intelligence_sync_all(rictus_intelligence_sync_t *sync,const rictus_intelligence_record_store_t *store,size_t *sent,size_t *failed);
+void rictus_intelligence_sync_last_error(long *http_status,int *curl_code,char *body,size_t body_size);
 #endif
