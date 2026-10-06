@@ -50,6 +50,7 @@
 #include "doctrine.h"
 #include "warning.h"
 #include "warning_exercise.h"
+#include "sync.h"
 
 
 #define RICTUS_INTELLIGENCE_COLLECTION_INTERVAL_MS \
@@ -89,6 +90,10 @@ g_intelligence_records;
 static const char*
 g_intelligence_record_path =
 "intelligence.records";
+
+static rictus_intelligence_sync_t g_intelligence_sync;
+#define RICTUS_INTELLIGENCE_REMOTE_ENDPOINT "https://stn-labz.com"
+#define RICTUS_INTELLIGENCE_SYNC_PENDING "state/intelligence/remote.pending"
 
 #define RICTUS_INTELLIGENCE_NOTIFICATION_MAX RICTUS_INTELLIGENCE_RECORD_MAX
 
@@ -2687,6 +2692,15 @@ rictus_intelligence_publish_item(
 
     {rictus_intelligence_warning_t warning;if(rictus_intelligence_warning_evaluate(item,&warning)&&warning.severity>=RICTUS_INTELLIGENCE_SEVERITY_HIGH){if(!rictus_warning_create(&g_warning_store,id,&warning))printf("[INTELLIGENCE] Warning persistence FAILED id=%s\n",id);else rictus_warning_deliver(&g_warning_store,g_intelligence_host->send_message);}}
 
+    {
+        const rictus_intelligence_record_t *record =
+            rictus_intelligence_record_store_find(&g_intelligence_records, id);
+        if (record != NULL && rictus_intelligence_sync_report(&g_intelligence_sync, record))
+            printf("[INTELLIGENCE] STN-LABZ report synchronized id=%s\n", id);
+        else
+            printf("[INTELLIGENCE] STN-LABZ report queued id=%s\n", id);
+    }
+
     if (!rictus_intelligence_notification_queue(id))
     {
         printf("[INTELLIGENCE] Notification queue FULL id=%s\n", id);
@@ -3140,6 +3154,7 @@ rictus_intelligence_worker(void *parameter)
     printf("[INTELLIGENCE] Worker started.\n");
 
     while (!rictus_intelligence_stop_wait(0)) {
+        (void)rictus_intelligence_sync_retry(&g_intelligence_sync, &g_intelligence_records);
         rictus_intelligence_collect_cycle();
         if (rictus_intelligence_stop_wait(RICTUS_INTELLIGENCE_COLLECTION_INTERVAL_MS)) break;
     }
@@ -3266,6 +3281,12 @@ rictus_intelligence_start(
         (unsigned int)
         g_intelligence_records.count
     );
+
+    rictus_intelligence_sync_init(&g_intelligence_sync,
+        RICTUS_INTELLIGENCE_REMOTE_ENDPOINT,
+        RICTUS_INTELLIGENCE_SYNC_PENDING);
+    if (!rictus_intelligence_sync_retry(&g_intelligence_sync, &g_intelligence_records))
+        printf("[INTELLIGENCE] STN-LABZ retry queue processing failed.\n");
 
     if(!rictus_warning_load(&g_warning_store)){g_intelligence_host=NULL;return RICTUS_MODULE_ERR_START_FAILED;}
     if(!rictus_warning_exercise_load(&g_warning_exercise_store)){g_intelligence_host=NULL;return RICTUS_MODULE_ERR_START_FAILED;}
