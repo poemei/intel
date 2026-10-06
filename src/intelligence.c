@@ -412,15 +412,37 @@ rictus_intelligence_command_synch(
     void *handler_context
 )
 {
+    size_t sent = 0;
+    size_t failed = 0;
+    char response[160];
+
     (void)command;
     (void)handler_context;
     if (reply == NULL) return RICTUS_MODULE_ERR_INVALID_ARGUMENT;
 
-    if (!rictus_intelligence_sync_retry(&g_intelligence_sync, &g_intelligence_records))
-        return reply(reply_context, "SYNCH FAILED | stn-labz.com")
+    if (!rictus_intelligence_sync_all(
+            &g_intelligence_sync,
+            &g_intelligence_records,
+            &sent,
+            &failed))
+    {
+        (void)snprintf(
+            response,
+            sizeof(response),
+            "SYNCH INCOMPLETE | sent=%zu failed=%zu | stn-labz.com",
+            sent,
+            failed);
+        return reply(reply_context, response)
             ? RICTUS_MODULE_OK : RICTUS_MODULE_ERR_START_FAILED;
+    }
 
-    return reply(reply_context, "SYNCH COMPLETE | stn-labz.com")
+    (void)snprintf(
+        response,
+        sizeof(response),
+        "SYNCH COMPLETE | sent=%zu failed=%zu | stn-labz.com",
+        sent,
+        failed);
+    return reply(reply_context, response)
         ? RICTUS_MODULE_OK : RICTUS_MODULE_ERR_START_FAILED;
 }
 
