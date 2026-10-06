@@ -17,7 +17,7 @@
     18
 
 #define RICTUS_INTELLIGENCE_VERSION_PATCH \
-    0
+    1
 
 
 typedef enum
