@@ -924,7 +924,7 @@ rictus_intelligence_command_reject(
             ? RICTUS_MODULE_OK : RICTUS_MODULE_ERR_START_FAILED;
 
     snprintf(response, sizeof(response),
-        "SRT REJECTED | %s | terminal human disposition; Rictus will not advance this INT",
+        "SRT REJECTED | %.31s | terminal human disposition; Rictus will not advance this INT",
         command->arguments);
     return reply(reply_context, response)
         ? RICTUS_MODULE_OK : RICTUS_MODULE_ERR_START_FAILED;
