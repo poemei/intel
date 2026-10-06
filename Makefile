@@ -20,6 +20,7 @@ SOURCES := \
 	src/relevance.c \
 	src/seen.c \
 	src/sources.c \
+	src/sync.c \
 	src/srt.c \
 	src/warning.c \
 	src/warning_exercise.c
