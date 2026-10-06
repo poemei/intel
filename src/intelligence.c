@@ -897,7 +897,7 @@ rictus_intelligence_command_reject(
             return reply(reply_context, "SRT REJECTION FAILED | persistence failure")
                 ? RICTUS_MODULE_OK : RICTUS_MODULE_ERR_START_FAILED;
         snprintf(response, sizeof(response),
-            "SRT REJECTED | %s | terminal human disposition; Rictus will not advance this INT",
+            "SRT REJECTED | %.31s | terminal human disposition; Rictus will not advance this INT",
             command->arguments);
         return reply(reply_context, response)
             ? RICTUS_MODULE_OK : RICTUS_MODULE_ERR_START_FAILED;
@@ -905,7 +905,7 @@ rictus_intelligence_command_reject(
     if (strcasecmp(existing->status, "REJECTED") == 0)
     {
         snprintf(response, sizeof(response),
-            "SRT ALREADY REJECTED | %s | terminal human disposition retained",
+            "SRT ALREADY REJECTED | %.31s | terminal human disposition retained",
             command->arguments);
         return reply(reply_context, response)
             ? RICTUS_MODULE_OK : RICTUS_MODULE_ERR_START_FAILED;
@@ -913,7 +913,7 @@ rictus_intelligence_command_reject(
     if (strcasecmp(existing->status, "REQUESTED") != 0)
     {
         snprintf(response, sizeof(response),
-            "SRT REJECTION REFUSED | %s | STATUS=%s",
+            "SRT REJECTION REFUSED | %.31s | STATUS=%.31s",
             command->arguments, existing->status);
         return reply(reply_context, response)
             ? RICTUS_MODULE_OK : RICTUS_MODULE_ERR_START_FAILED;
@@ -2449,7 +2449,8 @@ rictus_intelligence_develop_item(
             source_item->source);
 
     snprintf(developed->evidence, sizeof(developed->evidence),
-        "Established by the cited source: %s",
+        "Established by the cited source: %.*s",
+        (int)(sizeof(developed->evidence) - sizeof("Established by the cited source: ")),
         source_item->summary[0] != '\0' ? source_item->summary : source_item->title);
     snprintf(developed->assessment, sizeof(developed->assessment),
         "%s%s", relevance->reason,
@@ -2468,10 +2469,15 @@ rictus_intelligence_develop_item(
         rictus_intelligence_copy(developed->unknowns, sizeof(developed->unknowns),
             "Request outcome, repetition across distinct sites or sensors, and any effect beyond the reported pattern match are not supplied by this event.");
     }
-    snprintf(developed->provenance, sizeof(developed->provenance),
-        "%s%s%s", source_item->source,
-        source_item->url[0] != '\0' ? " | " : "",
-        source_item->url);
+    rictus_intelligence_copy(developed->provenance, sizeof(developed->provenance),
+        source_item->source);
+    if (source_item->url[0] != '\0')
+    {
+        rictus_intelligence_append(developed->provenance,
+            sizeof(developed->provenance), " | ");
+        rictus_intelligence_append(developed->provenance,
+            sizeof(developed->provenance), source_item->url);
+    }
 
     if (rictus_intelligence_contains_ci(source_item->title, "CVE-") ||
         rictus_intelligence_contains_ci(source_item->summary, "CVE-"))
