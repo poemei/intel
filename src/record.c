@@ -1,10 +1,11 @@
+#define _POSIX_C_SOURCE 200809L
+
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <strings.h>
 
 #include "record.h"
-
-#define RECORD_LINE_MAX 65536
 
 static unsigned long
 record_hash_update(
@@ -219,7 +220,9 @@ rictus_intelligence_record_store_load(
 )
 {
     FILE* file;
-    char line[RECORD_LINE_MAX];
+    char* line = NULL;
+    size_t line_capacity = 0;
+    ssize_t line_length;
 
     if (store == NULL || path == NULL)
     {
@@ -233,7 +236,7 @@ rictus_intelligence_record_store_load(
         return 1;
     }
 
-    while (fgets(line, sizeof(line), file) != NULL)
+    while ((line_length = getline(&line, &line_capacity, file)) >= 0)
     {
         char* context = NULL;
         char* fields[15];
@@ -241,7 +244,11 @@ rictus_intelligence_record_store_load(
         size_t count = 0;
         rictus_intelligence_record_t* record;
 
-        line[strcspn(line, "\r\n")] = '\0';
+        while (line_length > 0 &&
+               (line[line_length - 1] == '\n' || line[line_length - 1] == '\r'))
+        {
+            line[--line_length] = '\0';
+        }
 
         token = strtok_r(line, "\t", &context);
 
@@ -258,6 +265,7 @@ rictus_intelligence_record_store_load(
 
         if (store->count >= RICTUS_INTELLIGENCE_RECORD_MAX)
         {
+            free(line);
             fclose(file);
             return 0;
         }
@@ -299,6 +307,7 @@ rictus_intelligence_record_store_load(
         ++store->count;
     }
 
+    free(line);
     fclose(file);
     return 1;
 }
