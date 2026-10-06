@@ -238,9 +238,8 @@ rictus_intelligence_record_store_load(
 
     while ((line_length = getline(&line, &line_capacity, file)) >= 0)
     {
-        char* context = NULL;
         char* fields[15];
-        char* token;
+        char* cursor;
         size_t count = 0;
         rictus_intelligence_record_t* record;
 
@@ -250,15 +249,23 @@ rictus_intelligence_record_store_load(
             line[--line_length] = '\0';
         }
 
-        token = strtok_r(line, "\t", &context);
+        fields[count++] = line;
+        cursor = line;
 
-        while (token != NULL && count < 15)
+        while (*cursor != '\0' && count < 15)
         {
-            fields[count++] = token;
-            token = strtok_r(NULL, "\t", &context);
+            if (*cursor == '\t')
+            {
+                *cursor = '\0';
+                fields[count++] = cursor + 1;
+            }
+            ++cursor;
         }
 
-        if (count != 7 && count != 8 && count != 15)
+        /* A valid record has exactly 7, 8, or 15 TSV fields. Preserve
+         * empty fields: strtok_r() collapses adjacent tab delimiters and
+         * made persisted records with blank metadata impossible to reload. */
+        if (count != 7 && count != 8 && count != 15 || *cursor != '\0')
         {
             continue;
         }
