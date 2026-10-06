@@ -109,7 +109,7 @@ static int json_string_after(const char *start,const char *key,char *out,size_t 
     if(*p++!=':')return 0;while(*p&&(*p==' '||*p=='\t'||*p=='\r'||*p=='\n'))++p;
     if(*p++!='\"')return 0;
     while(*p&&*p!='\"'){
-        if(*p=='\\\\'&&p[1]){++p;if(*p=='n')out[o++]=' ';else if(*p=='r'||*p=='t')out[o++]=' ';else out[o++]=*p++;}
+        if(*p=='\\'&&p[1]){++p;if(*p=='n')out[o++]=' ';else if(*p=='r'||*p=='t')out[o++]=' ';else out[o++]=*p++;}
         else out[o++]=*p++;
         if(o+1>=cap)return 0;
     }
