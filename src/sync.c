@@ -106,14 +106,18 @@ static int json_string_after(const char *start,const char *key,char *out,size_t 
     if(snprintf(needle,sizeof(needle),"\"%s\"",key)>=(int)sizeof(needle))return 0;
     p=strstr(start,needle);if(!p)return 0;p+=strlen(needle);
     while(*p&&(*p==' '||*p=='\t'||*p=='\r'||*p=='\n'))++p;
-    if(*p++!=':')return 0;while(*p&&(*p==' '||*p=='\t'||*p=='\r'||*p=='\n'))++p;
+    if (*p++ != ':') return 0;
+    while (*p && (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n')) ++p;
     if(*p++!='\"')return 0;
     while(*p&&*p!='\"'){
         if(*p=='\\'&&p[1]){++p;if(*p=='n')out[o++]=' ';else if(*p=='r'||*p=='t')out[o++]=' ';else out[o++]=*p++;}
         else out[o++]=*p++;
         if(o+1>=cap)return 0;
     }
-    if(*p!='\"')return 0;out[o]='\0';if(next)*next=p+1;return 1;
+    if (*p != '\"') return 0;
+    out[o] = '\0';
+    if (next) *next = p + 1;
+    return 1;
 }
 
 static int spool_has(const char *path,const char *assignment_id)
@@ -167,8 +171,12 @@ int rictus_intelligence_sync_assignment_results(rictus_intelligence_sync_t *s,co
         if(sscanf(line,"%127[^\t]\t%63[^\r\n]",id,status)!=2)continue;
         if(!assignment_status(s,id,status)){if(fputs(line,out)==EOF)ok=0;}
     }
-    if(fflush(out)!=0)ok=0;fclose(in);if(fclose(out)!=0)ok=0;
-    if(ok&&rename(temp,results_path)!=0)ok=0;if(!ok)remove(temp);return ok;
+    if (fflush(out) != 0) ok = 0;
+    fclose(in);
+    if (fclose(out) != 0) ok = 0;
+    if (ok && rename(temp, results_path) != 0) ok = 0;
+    if (!ok) remove(temp);
+    return ok;
 }
 
 static int build_json(const rictus_intelligence_record_t *r,char *json,size_t cap){char id[128],title[2048],content[24576],source[512];int n;if(!r||!escape_json(r->id,id,sizeof(id))||!escape_json(r->item.title,title,sizeof(title))||!escape_json(r->item.content[0]?r->item.content:r->item.summary,content,sizeof(content))||!escape_json(r->item.source,source,sizeof(source)))return 0;n=snprintf(json,cap,"{\"intelligence_id\":\"%s\",\"title\":\"%s\",\"content\":\"%s\",\"source\":\"%s\",\"status\":\"ACTIVE\"}",id,title,content,source);return n>0&&(size_t)n<cap;}
