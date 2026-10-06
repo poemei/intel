@@ -3598,7 +3598,8 @@ rictus_intelligence_start(
 
     if (pthread_create(&g_intelligence_thread, NULL, rictus_intelligence_worker, NULL) != 0)
     {
-        (void)g_intelligence_host->unregister_command("synch", NULL);\n        (void)g_intelligence_host->unregister_command("reject", NULL);
+        (void)g_intelligence_host->unregister_command("synch", NULL);
+        (void)g_intelligence_host->unregister_command("reject", NULL);
         (void)g_intelligence_host->unregister_command("warn", NULL);
         (void)g_intelligence_host->unregister_command("sigint", NULL);
         (void)g_intelligence_host->unregister_command("rag", NULL);
@@ -3647,7 +3648,9 @@ rictus_intelligence_stop(void)
 
     g_intelligence_thread_active = 0;
 
-    if(!g_intelligence_host->unregister_command("synch",NULL))return RICTUS_MODULE_ERR_STOP_FAILED;\n    printf("[INTELLIGENCE] Command unregistered: synch\\n");\n    if(!g_intelligence_host->unregister_command("reject",NULL))return RICTUS_MODULE_ERR_STOP_FAILED;
+    if(!g_intelligence_host->unregister_command("synch",NULL))return RICTUS_MODULE_ERR_STOP_FAILED;
+    printf("[INTELLIGENCE] Command unregistered: synch\n");
+    if(!g_intelligence_host->unregister_command("reject",NULL))return RICTUS_MODULE_ERR_STOP_FAILED;
     printf("[INTELLIGENCE] Command unregistered: reject\n");
     if(!g_intelligence_host->unregister_command("warn",NULL))return RICTUS_MODULE_ERR_STOP_FAILED;
     printf("[INTELLIGENCE] Command unregistered: warn\n");
